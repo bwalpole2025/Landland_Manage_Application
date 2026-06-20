@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: landland
+          POSTGRES_PASSWORD: landland
+          POSTGRES_DB: landland
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U landland"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://landland:landland@localhost:5432/landland?schema=public
+      APP_URL: http://localhost:3000
+      SESSION_COOKIE_NAME: landland_session
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npm run db:generate
+
+      - name: Apply migrations + seed demo data
+        run: |
+          npm run db:migrate
+          npm run db:seed
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Smoke test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Build design-system explorer (Storybook)
+        run: npm run build-storybook

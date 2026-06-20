@@ -1,0 +1,764 @@
+// Landland data model.
+//
+// Multi-tenancy: every business record carries `accountId` and is scoped to an
+// Account. Application-level scoping is enforced in the tRPC layer (see
+// src/server/trpc.ts -> accountProcedure); prisma/rls.sql adds Postgres
+// row-level-security policies as defense-in-depth.
+//
+// Money: stored as integer minor units (`*Minor`, pence) plus an ISO-4217
+// `currency` code. Never store money as a float. Interest rates are integer
+// basis points (`*Bps`, 1% = 100). Derived figures (annual yield, loan-to-value,
+// arrears) are computed in src/lib/finance.ts, not stored.
+//
+// Audit + lifecycle: all models have createdAt/updatedAt. Key entities
+// (Property, Tenancy) additionally support soft-delete (`deletedAt`) and
+// archive (`archivedAt`).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================================================
+// Identity, tenancy & access
+// ===========================================================================
+
+enum Role {
+  OWNER
+  ASSISTANT
+  ACCOUNTANT
+}
+
+enum AccountType {
+  INDIVIDUAL
+  PORTFOLIO
+  LIMITED_COMPANY
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+/// The top-level tenant. Owns users, portfolios, properties and everything else.
+model Account {
+  id   String      @id @default(cuid())
+  name String
+  type AccountType @default(INDIVIDUAL)
+
+  // Subscription / trial state.
+  subscriptionStatus SubscriptionStatus @default(TRIALING)
+  trialEndsAt        DateTime?
+
+  // Tax & locale.
+  firstTaxYear String? // e.g. "2024/25" — first year this account reports for
+  timeZone     String  @default("Europe/London")
+  currency     String  @default("GBP")
+
+  // Preferences.
+  marketingEmails    Boolean @default(false)
+  notificationEmails Boolean @default(true)
+
+  // HMRC Making Tax Digital enrolment.
+  mtdEnrolled Boolean @default(false)
+  utr         String?
+
+  users            User[]
+  memberships      Membership[]
+  portfolios       Portfolio[]
+  companies        Company[]
+  beneficialOwners BeneficialOwner[]
+  properties       Property[]
+  mortgages        Mortgage[]
+  valuations       Valuation[]
+  tenancies        Tenancy[]
+  tenants          Tenant[]
+  transactions     Transaction[]
+  documents        Document[]
+  notes            Note[]
+  reminders        Reminder[]
+  taxStatements    TaxStatement[]
+  bankAccounts     BankAccount[]
+  obligations      MtdObligation[]
+  submissions      MtdSubmission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// A person. Belongs to a home Account; can additionally be invited to other
+/// accounts via Membership (e.g. an accountant with delegated access).
+model User {
+  id        String @id @default(cuid())
+  accountId String // home account
+
+  firstName String
+  lastName  String
+  email     String  @unique
+  // Null until the address is confirmed; set to the verification timestamp.
+  emailVerified  DateTime?
+  mobile         String?
+  mobileVerified Boolean   @default(false)
+
+  passwordHash     String
+  twoFactorEnabled Boolean @default(false)
+  totpSecret       String? // secret backing the optional TOTP 2FA
+
+  role                      Role @default(OWNER)
+  numberOfPropertiesManaged Int  @default(0)
+
+  account            Account                  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  memberships        Membership[]
+  sessions           Session[]
+  verificationTokens EmailVerificationToken[]
+  resetTokens        PasswordResetToken[]
+  beneficialOwners   BeneficialOwner[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+}
+
+/// Join of a User to an Account with a role — implements "can be invited to
+/// other accounts". `delegated` marks external accountants/assistants.
+model Membership {
+  id        String  @id @default(cuid())
+  userId    String
+  accountId String
+  role      Role    @default(OWNER)
+  delegated Boolean @default(false)
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, accountId])
+  @@index([accountId])
+}
+
+model Session {
+  id              String   @id @default(cuid())
+  userId          String
+  hashedToken     String   @unique
+  activeAccountId String
+  expiresAt       DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model EmailVerificationToken {
+  id          String   @id @default(cuid())
+  userId      String
+  hashedToken String   @unique
+  expiresAt   DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id          String    @id @default(cuid())
+  userId      String
+  hashedToken String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ===========================================================================
+// Portfolios, companies & beneficial ownership
+// ===========================================================================
+
+enum PortfolioType {
+  PERSONAL
+  BUSINESS
+}
+
+model Portfolio {
+  id        String        @id @default(cuid())
+  accountId String
+  name      String
+  type      PortfolioType @default(PERSONAL)
+  isDefault Boolean       @default(false)
+  companyId String?
+
+  account          Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  company          Company?          @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  properties       Property[]
+  transactions     Transaction[]
+  beneficialOwners BeneficialOwner[]
+  taxStatements    TaxStatement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([companyId])
+}
+
+model Company {
+  id                String    @id @default(cuid())
+  accountId         String
+  name              String
+  companyNumber     String?
+  incorporationDate DateTime?
+  directorsLoanBalanceMinor Int @default(0)
+  currency          String    @default("GBP")
+
+  account          Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  portfolios       Portfolio[]
+  beneficialOwners BeneficialOwner[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+}
+
+enum BeneficialOwnerType {
+  INDIVIDUAL
+  COMPANY
+}
+
+model BeneficialOwner {
+  id        String              @id @default(cuid())
+  accountId String
+  ownerType BeneficialOwnerType @default(INDIVIDUAL)
+  name      String
+  userId      String?
+  companyId   String?
+  portfolioId String?
+
+  account       Account                   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user          User?                     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  company       Company?                  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  portfolio     Portfolio?                @relation(fields: [portfolioId], references: [id], onDelete: SetNull)
+  properties    PropertyBeneficialOwner[]
+  taxStatements TaxStatement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([portfolioId])
+}
+
+/// Property *—* BeneficialOwner join carrying the ownership percentage.
+model PropertyBeneficialOwner {
+  id                  String  @id @default(cuid())
+  accountId           String
+  propertyId          String
+  beneficialOwnerId   String
+  ownershipPercentage Decimal @db.Decimal(5, 2)
+
+  property        Property        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  beneficialOwner BeneficialOwner @relation(fields: [beneficialOwnerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([propertyId, beneficialOwnerId])
+  @@index([accountId])
+  @@index([beneficialOwnerId])
+}
+
+// ===========================================================================
+// Properties, mortgages & valuations
+// ===========================================================================
+
+enum PropertyType {
+  FLAT
+  TERRACED
+  SEMI_DETACHED
+  DETACHED
+  HMO
+  COMMERCIAL
+}
+
+enum RentFrequency {
+  MONTHLY
+  WEEKLY
+  QUARTERLY
+  ANNUALLY
+}
+
+model Property {
+  id          String       @id @default(cuid())
+  accountId   String
+  portfolioId String
+
+  // Address.
+  nickname String
+  line1    String
+  line2    String?
+  city     String
+  postcode String
+
+  type     PropertyType @default(FLAT)
+  bedrooms Int          @default(1)
+  currency String       @default("GBP")
+
+  // Expected rental income (property-level headline figure).
+  rentalIncomeMinor     Int?
+  rentalIncomeFrequency RentFrequency?
+
+  // Finance. annualYield (income/valuation) is derived in lib/finance.ts.
+  currentValuationMinor Int?
+  purchasePriceMinor    Int?
+  purchaseDate          DateTime?
+
+  // Street-view camera position (for the property hero map).
+  streetViewLat     Float?
+  streetViewLng     Float?
+  streetViewHeading Float?
+  streetViewPitch   Float?
+  streetViewZoom    Float?
+
+  // EPC data (the structured rating; the certificate itself is a Document).
+  epcRating     String?
+  epcScore      Int?
+  epcExpiryDate DateTime?
+
+  account      Account                   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  portfolio    Portfolio                 @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  owners       PropertyBeneficialOwner[]
+  mortgages    Mortgage[]
+  valuations   Valuation[]
+  tenancies    Tenancy[]
+  documents    Document[]
+  transactions Transaction[]
+  notes        Note[]
+  reminders    Reminder[]
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  archivedAt DateTime? // archived flag (non-null = archived)
+  deletedAt  DateTime?
+
+  @@index([accountId])
+  @@index([portfolioId])
+}
+
+enum MortgageRepaymentType {
+  REPAYMENT
+  INTEREST_ONLY
+}
+
+/// A mortgage secured on a property. Loan-to-value is derived from the balance
+/// and the property's current valuation (lib/finance.ts).
+model Mortgage {
+  id         String @id @default(cuid())
+  accountId  String
+  propertyId String
+
+  lender              String
+  balanceMinor        Int
+  monthlyPaymentMinor Int
+  // Interest as a rate (basis points, 1% = 100) and/or a monthly amount.
+  interestRateBps      Int?
+  monthlyInterestMinor Int?
+  repaymentType        MortgageRepaymentType @default(REPAYMENT)
+  productName          String?
+  productEndDate       DateTime?
+  currency             String                @default("GBP")
+
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([propertyId])
+}
+
+/// A point-in-time valuation; properties keep a history of these.
+model Valuation {
+  id         String   @id @default(cuid())
+  accountId  String
+  propertyId String
+  amountMinor Int
+  currency   String   @default("GBP")
+  date       DateTime
+  source     String? // e.g. "purchase", "estimate", "surveyor"
+
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId])
+  @@index([propertyId])
+}
+
+// ===========================================================================
+// Tenancies
+// ===========================================================================
+
+enum TenancyStatus {
+  ACTIVE
+  VACANT
+  ENDED
+}
+
+enum TenancyBalanceState {
+  UP_TO_DATE
+  IN_ARREARS
+  IN_CREDIT
+}
+
+model Tenancy {
+  id         String        @id @default(cuid())
+  accountId  String
+  propertyId String
+  status     TenancyStatus @default(ACTIVE)
+
+  // Primary tenant contact (additional household members live in Tenant).
+  tenantName  String?
+  tenantEmail String?
+
+  rentMinor     Int
+  currency      String        @default("GBP")
+  rentFrequency RentFrequency @default(MONTHLY)
+  rentDueDay    Int           @default(1)
+  depositMinor  Int?
+  depositScheme String?
+
+  startDate       DateTime
+  endDate         DateTime? // null = ongoing
+  nextPaymentDate DateTime?
+
+  // Arrears/credit state. balanceMinor is signed: positive = owed, negative = credit.
+  balanceState TenancyBalanceState @default(UP_TO_DATE)
+  balanceMinor Int                 @default(0)
+
+  account      Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  property     Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tenants      Tenant[]
+  transactions Transaction[]
+  documents    Document[]
+  reminders    Reminder[]
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  archivedAt DateTime?
+  deletedAt  DateTime?
+
+  @@index([accountId])
+  @@index([propertyId])
+}
+
+model Tenant {
+  id        String  @id @default(cuid())
+  accountId String
+  tenancyId String
+  name      String
+  email     String?
+  phone     String?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  tenancy Tenancy @relation(fields: [tenancyId], references: [id], onDelete: Cascade)
+  notes   Note[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([tenancyId])
+}
+
+// ===========================================================================
+// Money in & out
+// ===========================================================================
+
+enum TransactionDirection {
+  INCOME
+  EXPENSE
+}
+
+enum TransactionCategory {
+  RENT
+  OTHER_PROPERTY_INCOME
+  RENT_RATES_INSURANCE
+  REPAIRS_MAINTENANCE
+  FINANCE_COSTS
+  PROFESSIONAL_FEES
+  SERVICES_WAGES
+  OTHER_EXPENSES
+}
+
+enum TransactionSource {
+  BANK_FEED
+  MANUAL
+  IMPORT
+}
+
+model Transaction {
+  id            String               @id @default(cuid())
+  accountId     String
+  // Untracked transactions (no property) fall into the account's default portfolio.
+  portfolioId   String?
+  propertyId    String?
+  tenancyId     String?
+  bankAccountId String?
+
+  date        DateTime
+  rentDueDate DateTime? // for rent: the date the rent was due
+  amountMinor Int
+  currency    String               @default("GBP")
+  direction   TransactionDirection
+  category    TransactionCategory?
+  subcategory String?
+  description String
+  notes       String?
+
+  receiptDocumentId String?
+  source            TransactionSource @default(BANK_FEED)
+  reconciled        Boolean           @default(false)
+  deactivated       Boolean           @default(false)
+  // Idempotency key from the bank feed to avoid duplicate imports.
+  externalId        String?
+
+  account         Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  portfolio       Portfolio?   @relation(fields: [portfolioId], references: [id], onDelete: SetNull)
+  property        Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  tenancy         Tenancy?     @relation(fields: [tenancyId], references: [id], onDelete: SetNull)
+  bankAccount     BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  receiptDocument Document?    @relation("TransactionReceipt", fields: [receiptDocumentId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([accountId, externalId])
+  @@index([accountId])
+  @@index([propertyId])
+  @@index([tenancyId])
+  @@index([portfolioId])
+}
+
+// ===========================================================================
+// Documents, notes & reminders
+// ===========================================================================
+
+enum DocumentCategory {
+  GAS_SAFETY
+  EICR
+  EPC
+  INSURANCE
+  TENANCY_AGREEMENT
+  RIGHT_TO_RENT
+  DEPOSIT_PROTECTION
+  MORTGAGE_STATEMENT
+  RECEIPT
+  INVOICE
+  STATEMENT
+  OTHER
+}
+
+model Document {
+  id         String           @id @default(cuid())
+  accountId  String
+  propertyId String?
+  tenancyId  String?
+  category   DocumentCategory @default(OTHER)
+  title      String
+  // Object-storage key (see DocumentStorage provider).
+  storageKey String
+  issueDate  DateTime?
+  expiryDate DateTime?
+
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tenancy  Tenancy?  @relation(fields: [tenancyId], references: [id], onDelete: Cascade)
+  reminders   Reminder[]
+  receiptFor  Transaction[] @relation("TransactionReceipt")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([propertyId])
+  @@index([tenancyId])
+}
+
+/// A free-text note attached to a property or a tenant.
+model Note {
+  id          String   @id @default(cuid())
+  accountId   String
+  propertyId  String?
+  tenantId    String?
+  description String
+  date        DateTime
+
+  account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+}
+
+enum ReminderStatus {
+  OPEN
+  COMPLETED
+}
+
+/// A dated reminder. May stand alone or hang off a document (e.g. certificate
+/// expiry), a property, or a tenancy.
+model Reminder {
+  id          String         @id @default(cuid())
+  accountId   String
+  documentId  String?
+  propertyId  String?
+  tenancyId   String?
+  name        String
+  description String?
+  dueDate     DateTime
+  status      ReminderStatus @default(OPEN)
+  completedAt DateTime?
+
+  account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  document Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tenancy  Tenancy?  @relation(fields: [tenancyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([dueDate])
+}
+
+// ===========================================================================
+// Tax
+// ===========================================================================
+
+enum TaxStatementScope {
+  PORTFOLIO
+  OWNER
+}
+
+/// A computed tax statement for a portfolio or a beneficial owner, for a tax year.
+model TaxStatement {
+  id                String            @id @default(cuid())
+  accountId         String
+  scope             TaxStatementScope
+  portfolioId       String?
+  beneficialOwnerId String?
+  taxYear           String
+
+  totalIncomeMinor   Int
+  totalExpensesMinor Int
+  estimatedTaxMinor  Int
+  currency           String @default("GBP")
+  computedAt         DateTime
+
+  account         Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  portfolio       Portfolio?       @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  beneficialOwner BeneficialOwner? @relation(fields: [beneficialOwnerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+  @@index([portfolioId])
+}
+
+// ===========================================================================
+// Bank feed
+// ===========================================================================
+
+enum BankConnectionStatus {
+  CONNECTED
+  NEEDS_REAUTH
+  DISCONNECTED
+}
+
+model BankAccount {
+  id           String               @id @default(cuid())
+  accountId    String
+  provider     String               @default("mock")
+  bankName     String
+  accountName  String
+  maskedNumber String
+  status       BankConnectionStatus @default(CONNECTED)
+  lastSyncedAt DateTime?
+
+  account      Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId])
+}
+
+// ===========================================================================
+// MTD for IT
+// ===========================================================================
+
+enum MtdObligationStatus {
+  OPEN
+  FULFILLED
+  OVERDUE
+}
+
+model MtdObligation {
+  id        String              @id @default(cuid())
+  accountId String
+  taxYear   String
+  period    String
+  startDate DateTime
+  endDate   DateTime
+  dueDate   DateTime
+  status    MtdObligationStatus @default(OPEN)
+
+  account    Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  submission MtdSubmission?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([accountId, taxYear, period])
+  @@index([accountId])
+}
+
+model MtdSubmission {
+  id                 String   @id @default(cuid())
+  accountId          String
+  obligationId       String   @unique
+  submittedAt        DateTime
+  totalIncomeMinor   Int
+  totalExpensesMinor Int
+  receiptRef         String
+
+  account    Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  obligation MtdObligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId])
+}
