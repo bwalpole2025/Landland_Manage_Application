@@ -1,4 +1,17 @@
-import type { Address, ComplianceDocType, PropertyType } from "./types";
+import type { Address, ComplianceDocType, InsuranceType, PortfolioType, PropertyType } from "./types";
+
+export const PORTFOLIO_TYPE_LABELS: Record<PortfolioType, string> = {
+  personal: "Personal",
+  business: "Business / company",
+};
+
+export const INSURANCE_TYPE_LABELS: Record<InsuranceType, string> = {
+  buildings: "Buildings",
+  contents: "Contents",
+  landlord: "Landlord (buildings & liability)",
+  rent_guarantee: "Rent guarantee",
+  block: "Block policy",
+};
 
 export const PROPERTY_TYPE_LABELS: Record<PropertyType, string> = {
   flat: "Flat",

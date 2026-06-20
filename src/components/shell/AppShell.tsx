@@ -5,6 +5,7 @@ import { Sidebar } from "./Sidebar";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { TrialBanner } from "./TrialBanner";
 import { FloatingHelp } from "./FloatingHelp";
+import { CoachmarkProvider } from "@/components/coachmarks/CoachmarkProvider";
 import { BellIcon } from "@/components/icons";
 import { SIDEBAR_COOKIE, TRIAL_COOKIE } from "./shell-cookies";
 import type { AppSession } from "@/server/auth/session";
@@ -79,7 +80,9 @@ export function AppShell({ session, trial, initialCollapsed, trialDismissed, chi
         {trialOpen ? <TrialBanner daysLeft={trial.daysLeft} onDismiss={dismissTrial} /> : null}
 
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 lg:px-8 lg:py-8">{children}</div>
+          <CoachmarkProvider userId={session.user.id}>
+            <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 lg:px-8 lg:py-8">{children}</div>
+          </CoachmarkProvider>
         </main>
       </div>
 

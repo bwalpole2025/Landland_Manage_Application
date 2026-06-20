@@ -68,13 +68,28 @@ export async function registerUser(input: RegisterInput): Promise<{ userId: stri
     return created;
   });
 
-  const token = await createEmailVerificationToken(user.id);
+  await sendVerificationEmail(user.id, email);
+  return { userId: user.id };
+}
+
+/** Issue a fresh verification token and email the welcome/verify link. */
+export async function sendVerificationEmail(userId: string, email: string): Promise<void> {
+  const token = await createEmailVerificationToken(userId);
   await providers.mailer.send({
     to: email,
     subject: "Verify your Landland email",
-    text: `Confirm your email: ${env.appUrl}/verify?token=${token}`,
+    text: `Welcome to Landland! Confirm your email: ${env.appUrl}/verify?token=${token}`,
   });
-  return { userId: user.id };
+}
+
+/**
+ * Resend the welcome/verification email. Resolves silently whether or not the
+ * email exists or is already verified, so it never reveals account state.
+ */
+export async function resendVerification(email: string): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+  if (!user || user.emailVerified) return;
+  await sendVerificationEmail(user.id, user.email);
 }
 
 export async function verifyEmail(rawToken: string): Promise<boolean> {

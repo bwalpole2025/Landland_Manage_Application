@@ -1,18 +1,12 @@
-import { PageHeader, EmptyState, Button } from "@/components/ui";
+import { NotesScreen } from "@/components/files/NotesScreen";
+import { getAggregatedNotes } from "@/lib/notes";
+import { getProperties, getTenancies } from "@/services/repository";
+
+export const dynamic = "force-dynamic";
 
 export default function NotesPage() {
-  return (
-    <>
-      <PageHeader
-        title="Notes"
-        description="Keep notes against a property or tenant — repairs, conversations, agreements."
-        actions={<Button>Add note</Button>}
-      />
-      <EmptyState
-        title="No notes yet"
-        description="Add your first note to keep a record against a property or tenant."
-        action={<Button>Add note</Button>}
-      />
-    </>
-  );
+  const properties = getProperties().map((p) => ({ id: p.id, name: p.nickname }));
+  const tenants = getTenancies().map((t) => ({ id: t.id, name: t.tenants[0]?.name ?? "Tenant" }));
+
+  return <NotesScreen notes={getAggregatedNotes()} properties={properties} tenants={tenants} />;
 }

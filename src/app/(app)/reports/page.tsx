@@ -1,4 +1,5 @@
 import { PageHeader, Card, CardHeader, StatTile, Badge, Button } from "@/components/ui";
+import { SectionCoachmark } from "@/components/coachmarks/SectionCoachmark";
 import { getTransactions } from "@/services/repository";
 import { getPerPropertyPnl, getYtdTotals } from "@/lib/portfolio";
 import { taxYearBounds, taxYearFor } from "@/lib/dates";
@@ -29,6 +30,7 @@ export default function ReportsPage() {
 
   return (
     <>
+      <SectionCoachmark section="reports" />
       <PageHeader
         title="Reports"
         description={`Income, expenses and profit for ${taxYear}.`}

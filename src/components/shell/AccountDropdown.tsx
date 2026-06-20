@@ -72,8 +72,20 @@ export function AccountDropdown({ session, collapsed }: { session: AppSession; c
             <p className="truncate text-xs text-slate-500">{session.user.email}</p>
           </div>
           <div className="my-1 h-px bg-slate-100" />
-          <MenuLink onClick={() => setOpen(false)} label="Profile" />
-          <MenuLink onClick={() => setOpen(false)} label="Account settings" />
+          <MenuLink
+            onClick={() => {
+              setOpen(false);
+              router.push("/settings");
+            }}
+            label="Profile"
+          />
+          <MenuLink
+            onClick={() => {
+              setOpen(false);
+              router.push("/settings");
+            }}
+            label="Account settings"
+          />
           <MenuLink onClick={() => setOpen(false)} label="Switch account" hint="1 account" />
           <div className="my-1 h-px bg-slate-100" />
           <button

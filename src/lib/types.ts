@@ -63,10 +63,98 @@ export interface Property {
   address: Address;
   type: PropertyType;
   bedrooms: number;
+  /** Portfolio this property belongs to; unset falls to the default portfolio. */
+  portfolioId?: ID;
   /** Ownership split across users, must sum to 100. Drives P&L apportionment. */
   ownership: { userId: ID; share: number }[];
   purchasePricePence?: Pence;
   purchaseDate?: string;
+  /** Set when archived — hidden from active lists, but history is preserved. */
+  archivedAt?: string;
+}
+
+/** A free-text note kept against a property and, optionally, a tenancy. */
+export interface PropertyNote {
+  id: ID;
+  propertyId: ID;
+  tenancyId?: ID;
+  body: string;
+  author: string;
+  createdAt: string; // ISO datetime
+}
+
+export type ReminderStatus = "open" | "completed";
+
+/** A user task with a due date — surfaces under "My work" and on the calendar. */
+export interface Reminder {
+  id: ID;
+  accountId: ID;
+  name: string;
+  description?: string;
+  dueDate: string; // ISO date
+  status: ReminderStatus;
+  completedAt?: string; // ISO datetime
+  propertyId?: ID;
+  tenancyId?: ID;
+}
+
+export type PortfolioType = "personal" | "business";
+
+/** A grouping of properties (e.g. personally-held vs through a company). */
+export interface Portfolio {
+  id: ID;
+  accountId: ID;
+  name: string;
+  type: PortfolioType;
+  isDefault?: boolean;
+  /** Set when this portfolio is held through a limited company. */
+  companyId?: ID;
+}
+
+/** A limited company structure, enabling directors'-loan tracking. */
+export interface Company {
+  id: ID;
+  accountId: ID;
+  name: string;
+  companyNumber?: string;
+  incorporationDate?: string;
+  /** Outstanding directors' loan balance owed to/by the directors. */
+  directorsLoanBalancePence: Pence;
+}
+
+export type InsuranceType = "buildings" | "contents" | "landlord" | "rent_guarantee" | "block";
+
+/** An insurance policy held against a property. */
+export interface InsurancePolicy {
+  id: ID;
+  propertyId: ID;
+  type: InsuranceType;
+  provider: string;
+  policyNumber?: string;
+  premiumPence?: Pence;
+  startDate?: string;
+  /** Renewal/expiry date that drives reminders. */
+  expiryDate: string;
+}
+
+/** A point-in-time property valuation. The latest one is the "current" value. */
+export interface Valuation {
+  id: ID;
+  propertyId: ID;
+  amountPence: Pence;
+  date: string; // ISO date of the valuation
+  source?: "purchase" | "estimate" | "surveyor" | "avm";
+}
+
+/** An outstanding mortgage on a property. */
+export interface Mortgage {
+  id: ID;
+  propertyId: ID;
+  lender: string;
+  balancePence: Pence;
+  monthlyPaymentPence?: Pence;
+  interestRateBps?: number; // basis points, 1% = 100
+  repaymentType?: "repayment" | "interest_only";
 }
 
 export type TenancyStatus = "active" | "ended" | "vacant";
@@ -104,31 +192,48 @@ export type TransactionDirection = "income" | "expense";
  */
 export type TransactionCategory =
   // income
-  | "rent"
-  | "other_property_income"
+  | "rent" // SA105 box 20
+  | "deposit" // tenancy deposit held in a scheme — NOT taxable income
+  | "other_property_income" // box 20
   // expenses
-  | "rent_rates_insurance" // SA105 box 24
+  | "rent_rates_insurance" // SA105 box 24 (insurance, ground rent, service charges, utilities)
   | "repairs_maintenance" // box 25
-  | "finance_costs" // box 26 (mortgage interest — relief restricted)
-  | "professional_fees" // box 27 (letting agent, legal, accountancy)
+  | "finance_costs" // box 44 (mortgage interest — basic-rate relief, not deduction)
+  | "professional_fees" // box 27 (letting/management, legal, accountancy)
   | "services_wages" // box 28
-  | "other_expenses"; // box 29
+  | "other_expenses" // box 29
+  | "capital_expense"; // improvements/purchases — capital, tracked separately (CGT), not SA105
 
 export type ReconcileStatus = "unreconciled" | "reconciled" | "ignored";
 
 export interface Transaction {
   id: ID;
   accountId: ID;
-  propertyId?: ID; // unassigned transactions have no property yet
+  propertyId?: ID; // unassigned transactions fall to the default portfolio
   tenancyId?: ID;
+  /** Date the money hit the bank account. */
   date: string;
+  /**
+   * For rent income, the rent DUE date this payment settles, which may differ
+   * from the bank `date` (e.g. rent due on the 1st but paid on the 8th).
+   * Rent-collection and arrears matching use this date, falling back to `date`.
+   */
+  rentDueDate?: string;
   direction: TransactionDirection;
   amountPence: Pence; // always positive; `direction` gives the sign
   category?: TransactionCategory;
+  /** Optional finer classification within a category (e.g. "Insurance"). */
+  subcategory?: string;
   description: string;
+  /** Free-text notes attached to the transaction. */
+  notes?: string;
+  /** Reference to an attached receipt/invoice document. */
+  receiptRef?: string;
   /** Where this came from. Bank-feed items arrive un-categorised. */
   source: "bank_feed" | "manual";
   reconcile: ReconcileStatus;
+  /** Excluded from totals and tax when true (still visible behind a toggle). */
+  deactivated?: boolean;
   bankAccountId?: ID;
 }
 
@@ -149,6 +254,10 @@ export interface ComplianceDocument {
   accountId: ID;
   propertyId: ID;
   type: ComplianceDocType;
+  /** Fine-grained category id (see lib/documents.ts); defaults from `type`. */
+  category?: string;
+  /** Optional tenancy this document relates to (e.g. a tenancy agreement). */
+  tenancyId?: ID;
   title: string;
   /** Stored file reference (mock: a path/URL). */
   fileRef: string;
@@ -215,4 +324,10 @@ export interface BankAccount {
   maskedNumber: string;
   status: BankConnectionStatus;
   lastSyncedAt?: string; // ISO datetime
+  /** Open Banking consent expiry — prompts re-authorisation when near/past. */
+  consentExpiresAt?: string; // ISO datetime
+  /** Opaque provider connection token (never raw credentials). */
+  connectionId?: string;
+  /** Provider's account id, used to pull/sync transactions. */
+  externalAccountId?: string;
 }

@@ -76,6 +76,16 @@ export function formatDate(iso: string): string {
   });
 }
 
+/** Compact, friendly due-date, e.g. "5th Jul". */
+export function formatDueDateShort(iso: string): string {
+  const d = parseISODate(iso);
+  const day = d.getUTCDate();
+  const v = day % 100;
+  const suffix = ["th", "st", "nd", "rd"][(v - 20) % 10] ?? ["th", "st", "nd", "rd"][v] ?? "th";
+  const month = d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
+  return `${day}${suffix} ${month}`;
+}
+
 /** Format an ISO datetime as e.g. "20 Jun 2026, 14:32". */
 export function formatDateTime(isoDateTime: string): string {
   return new Date(isoDateTime).toLocaleString("en-GB", {

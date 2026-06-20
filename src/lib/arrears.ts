@@ -13,6 +13,15 @@ import { todayISO } from "./dates";
 
 const WINDOW_MONTHS = 3;
 
+/**
+ * The date a rent payment counts against — the rent DUE date when recorded,
+ * otherwise the bank date. Rent is matched to the schedule by this date, since
+ * the bank date can differ (e.g. due on the 1st, banked on the 8th).
+ */
+export function rentDueDateOf(t: Transaction): string {
+  return t.rentDueDate ?? t.date;
+}
+
 export type ArrearsStatus = "up_to_date" | "in_arrears" | "in_credit";
 
 export interface ArrearsResult {
@@ -77,7 +86,8 @@ export function computeArrears(
       t.tenancyId === tenancy.id &&
       t.direction === "income" &&
       t.category === "rent" &&
-      t.date >= windowStart,
+      !t.deactivated &&
+      rentDueDateOf(t) >= windowStart,
   );
 
   const expectedPence = dueDates.length * tenancy.rentPence;
@@ -90,7 +100,7 @@ export function computeArrears(
   else if (balancePence <= -halfMonth) status = "in_credit";
 
   const lastPaymentDate = rentReceived
-    .map((t) => t.date)
+    .map((t) => rentDueDateOf(t))
     .sort()
     .at(-1);
 

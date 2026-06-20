@@ -11,6 +11,7 @@ export const env = {
     hmrcMtd: process.env.HMRC_MTD_PROVIDER ?? "mock",
     documentStorage: process.env.DOCUMENT_STORAGE_PROVIDER ?? "mock",
     mailer: process.env.MAILER_PROVIDER ?? "console",
+    sms: process.env.SMS_PROVIDER ?? "console",
   },
   s3: {
     endpoint: process.env.S3_ENDPOINT,

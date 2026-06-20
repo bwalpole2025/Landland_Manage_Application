@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { AuthShell, AuthField, AuthSubmit, AuthError } from "@/components/auth/AuthShell";
+import { trpc } from "@/lib/trpc/client";
 
 const loginSchema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -13,22 +16,31 @@ const loginSchema = z.object({
 });
 type LoginValues = z.infer<typeof loginSchema>;
 
+// Credentials are pre-filled ONLY in development to ease local testing. In
+// production users must enter their own — we never auto-fill credentials.
+const isDev = process.env.NODE_ENV !== "production";
+
 export default function LoginPage() {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const [needsTotp, setNeedsTotp] = useState(false);
+  const [showResend, setShowResend] = useState(false);
+  const [resent, setResent] = useState(false);
+  const resend = trpc.auth.resendVerification.useMutation();
 
   const {
     register,
     handleSubmit,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: "demo@landland.app", password: "Password123!" },
+    defaultValues: isDev ? { email: "demo@landland.app", password: "Password123!" } : undefined,
   });
 
   async function onSubmit(values: LoginValues) {
     setFormError(null);
+    setShowResend(false);
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -41,89 +53,76 @@ export default function LoginPage() {
     }
     const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
     if (data.code === "TOTP_REQUIRED") setNeedsTotp(true);
+    if (data.code === "EMAIL_NOT_VERIFIED") setShowResend(true);
     setFormError(data.error ?? "Something went wrong. Please try again.");
   }
 
+  async function onResend() {
+    const email = getValues("email");
+    if (!email) return;
+    await resend.mutateAsync({ email });
+    setResent(true);
+  }
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center justify-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-base font-bold text-white">
-            L
-          </span>
-          <span className="text-xl font-semibold tracking-tight text-slate-900">Landland</span>
-        </div>
+    <AuthShell
+      title="Sign in"
+      subtitle="Welcome back. Sign in to your account."
+      footer={
+        <>
+          New to Landland?{" "}
+          <Link href="/register" className="font-medium text-brand-700 hover:text-brand-800">
+            Create an account
+          </Link>
+        </>
+      }
+    >
+      <form className="mt-5 space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
+        <AuthField label="Email" error={errors.email?.message}>
+          <input type="email" autoComplete="email" className="input" {...register("email")} />
+        </AuthField>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h1 className="text-lg font-semibold text-slate-900">Sign in</h1>
-          <p className="mt-1 text-sm text-slate-500">Welcome back. Sign in to your account.</p>
+        <AuthField label="Password" error={errors.password?.message}>
+          <input type="password" autoComplete="current-password" className="input" {...register("password")} />
+        </AuthField>
 
-          <form className="mt-5 space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-            <Field label="Email" error={errors.email?.message}>
-              <input
-                type="email"
-                autoComplete="email"
-                className="input"
-                {...register("email")}
-              />
-            </Field>
+        {needsTotp ? (
+          <AuthField label="Two-factor code" error={errors.totp?.message}>
+            <input inputMode="numeric" autoComplete="one-time-code" className="input" {...register("totp")} />
+          </AuthField>
+        ) : null}
 
-            <Field label="Password" error={errors.password?.message}>
-              <input
-                type="password"
-                autoComplete="current-password"
-                className="input"
-                {...register("password")}
-              />
-            </Field>
+        {formError ? <AuthError>{formError}</AuthError> : null}
 
-            {needsTotp ? (
-              <Field label="Two-factor code" error={errors.totp?.message}>
-                <input
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  className="input"
-                  {...register("totp")}
-                />
-              </Field>
-            ) : null}
-
-            {formError ? (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>
-            ) : null}
-
+        {showResend ? (
+          resent ? (
+            <p className="text-sm text-emerald-700">Verification email sent — check your inbox.</p>
+          ) : (
             <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+              type="button"
+              onClick={onResend}
+              disabled={resend.isPending}
+              className="text-sm font-medium text-brand-700 hover:text-brand-800 disabled:opacity-50"
             >
-              {isSubmitting ? "Signing in…" : "Sign in"}
+              Resend verification email
             </button>
-          </form>
+          )
+        ) : null}
 
-          <p className="mt-4 text-center text-xs text-slate-400">
-            Demo account is pre-filled — just click Sign in.
-          </p>
-        </div>
+        <AuthSubmit pending={isSubmitting}>{isSubmitting ? "Signing in…" : "Sign in"}</AuthSubmit>
+      </form>
+
+      <div className="mt-4 text-center">
+        <Link href="/forgot" className="text-sm font-medium text-brand-700 hover:text-brand-800">
+          Forgot your password?
+        </Link>
       </div>
-    </main>
-  );
-}
 
-function Field({
-  label,
-  error,
-  children,
-}: {
-  label: string;
-  error?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-sm font-medium text-slate-700">{label}</span>
-      {children}
-      {error ? <span className="mt-1 block text-xs text-red-600">{error}</span> : null}
-    </label>
+      {isDev ? (
+        <p className="mt-4 text-center text-xs text-slate-400">
+          Dev only: demo credentials are pre-filled. Disabled in production.
+        </p>
+      ) : null}
+    </AuthShell>
   );
 }

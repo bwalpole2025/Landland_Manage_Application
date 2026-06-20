@@ -18,6 +18,8 @@ export interface SessionUser {
   id: string;
   name: string;
   email: string;
+  /** True once the email address has been confirmed. */
+  emailVerified: boolean;
 }
 
 export type SubscriptionStatus = "TRIALING" | "ACTIVE" | "PAST_DUE" | "CANCELED";
@@ -90,6 +92,7 @@ export async function validateSessionToken(rawToken: string): Promise<AppSession
       id: session.user.id,
       name: `${session.user.firstName} ${session.user.lastName}`.trim(),
       email: session.user.email,
+      emailVerified: session.user.emailVerified !== null,
     },
     account: {
       id: account.id,

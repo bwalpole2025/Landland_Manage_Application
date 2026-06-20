@@ -5,16 +5,19 @@ import {
   AuthError,
   registerUser,
   requestPasswordReset,
+  resendVerification,
   resetPassword,
   verifyEmail,
 } from "@/server/auth/service";
-
-const passwordSchema = z
-  .string()
-  .min(8, "Password must be at least 8 characters")
-  .max(200);
+import { passwordSchema } from "@/server/validators";
+import { previewInvitation } from "@/server/auth/invitations";
 
 export const authRouter = router({
+  // Look up a pending invitation by token, to render the accept page.
+  invitationPreview: publicProcedure
+    .input(z.object({ token: z.string().min(1) }))
+    .query(async ({ input }) => previewInvitation(input.token)),
+
   register: publicProcedure
     .input(
       z.object({
@@ -38,6 +41,13 @@ export const authRouter = router({
   verifyEmail: publicProcedure
     .input(z.object({ token: z.string().min(1) }))
     .mutation(async ({ input }) => ({ ok: await verifyEmail(input.token) })),
+
+  resendVerification: publicProcedure
+    .input(z.object({ email: z.string().email() }))
+    .mutation(async ({ input }) => {
+      await resendVerification(input.email);
+      return { ok: true }; // never reveal whether the email exists / is verified
+    }),
 
   requestPasswordReset: publicProcedure
     .input(z.object({ email: z.string().email() }))

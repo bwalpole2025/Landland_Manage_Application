@@ -1,37 +1,22 @@
-import { PageHeader, Card, CardHeader } from "@/components/ui";
-import { ExpiryBadge } from "@/components/ExpiryBadge";
-import { getComplianceDocuments, getProperties } from "@/services/repository";
-import { expiryUrgency, formatDate } from "@/lib/dates";
-import { DOC_TYPE_LABELS } from "@/lib/labels";
+import { redirect } from "next/navigation";
+import { CalendarView } from "@/components/files/CalendarView";
+import { getSession } from "@/server/auth/session";
+import { getCalendarEvents, todayInZone, DEFAULT_TIME_ZONE } from "@/lib/calendar";
 
-export default function CalendarPage() {
-  const properties = getProperties();
-  const propertyName = (id: string) => properties.find((p) => p.id === id)?.nickname ?? "—";
+export const dynamic = "force-dynamic";
 
-  const upcoming = getComplianceDocuments()
-    .filter((d) => d.expiryDate)
-    .sort((a, b) => expiryUrgency(a.expiryDate).days! - expiryUrgency(b.expiryDate).days!);
+export default async function CalendarPage() {
+  const session = await getSession();
+  if (!session) redirect("/login");
 
-  return (
-    <>
-      <PageHeader title="Calendar" description="Key dates across your portfolio — certificate renewals and deadlines." />
-      <Card>
-        <CardHeader title="Upcoming dates" subtitle={`${upcoming.length} dated items`} />
-        <ul className="divide-y divide-slate-100">
-          {upcoming.map((doc) => (
-            <li key={doc.id} className="flex items-center gap-4 px-5 py-3">
-              <div className="w-28 shrink-0 text-sm font-medium text-slate-900">
-                {doc.expiryDate ? formatDate(doc.expiryDate) : "—"}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-900">{DOC_TYPE_LABELS[doc.type]}</p>
-                <p className="text-xs text-slate-500">{propertyName(doc.propertyId)}</p>
-              </div>
-              <ExpiryBadge expiryDate={doc.expiryDate} />
-            </li>
-          ))}
-        </ul>
-      </Card>
-    </>
-  );
+  // All date math uses the account time zone.
+  const timeZone = DEFAULT_TIME_ZONE;
+  const today = todayInZone(timeZone);
+
+  // Build events for a generous window so prev/next navigation stays populated.
+  const start = `${Number(today.slice(0, 4)) - 1}-01-01`;
+  const end = `${Number(today.slice(0, 4)) + 2}-12-31`;
+  const events = getCalendarEvents(start, end, { trialEndsAt: session.account.subscription.trialEndsAt });
+
+  return <CalendarView events={events} today={today} />;
 }

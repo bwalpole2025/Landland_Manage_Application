@@ -125,6 +125,14 @@ export function ChevronRightIcon(p: IconProps) {
   );
 }
 
+export function ChevronLeftIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
 export function ChevronDownIcon(p: IconProps) {
   return (
     <svg {...base(p)}>
@@ -159,6 +167,51 @@ export function CollapseIcon(p: IconProps) {
       <rect x="3" y="4" width="18" height="16" rx="2" />
       <path d="M9 4v16" />
       <path d="m15 9-2 3 2 3" />
+    </svg>
+  );
+}
+
+export function InfoIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 8h.01" />
+    </svg>
+  );
+}
+
+export function DownloadIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M12 3v12M7 11l5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
+  );
+}
+
+export function UploadIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M12 21V9M7 13l5-5 5 5" />
+      <path d="M5 4h14" />
+    </svg>
+  );
+}
+
+export function UnlinkIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2" />
+      <path d="M3 3l18 18" />
+    </svg>
+  );
+}
+
+export function LockIcon(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <rect x="4" y="11" width="16" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
     </svg>
   );
 }

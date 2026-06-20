@@ -11,6 +11,7 @@ import {
   type DocumentStorage,
 } from "./document-storage";
 import { ConsoleMailer, type Mailer } from "./mailer";
+import { ConsoleSms, type Sms } from "./sms";
 
 function makeBankFeed(): BankFeedProvider {
   switch (env.providers.bankFeed) {
@@ -45,14 +46,24 @@ function makeMailer(): Mailer {
   }
 }
 
+function makeSms(): Sms {
+  switch (env.providers.sms) {
+    // case "twilio": return new TwilioSms();
+    default:
+      return new ConsoleSms();
+  }
+}
+
 export const providers = {
   bankFeed: makeBankFeed(),
   hmrcMtd: makeHmrcMtd(),
   documentStorage: makeDocumentStorage(),
   mailer: makeMailer(),
+  sms: makeSms(),
 };
 
 export type { BankFeedProvider } from "./bank-feed";
 export type { HmrcMtdProvider } from "./hmrc-mtd";
 export type { DocumentStorage } from "./document-storage";
 export type { Mailer } from "./mailer";
+export type { Sms } from "./sms";

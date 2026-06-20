@@ -22,18 +22,19 @@ function inTaxYear(t: Transaction, taxYear: string): boolean {
 }
 
 export function estimateTax(allTransactions: Transaction[], taxYear: string): TaxEstimate {
-  const rows = allTransactions.filter((t) => inTaxYear(t, taxYear) && t.category);
+  // Only categorised, active transactions in the year count. Deposits (excluded)
+  // and capital expenses are not part of the SA105 income/expense computation.
+  const rows = allTransactions.filter((t) => inTaxYear(t, taxYear) && t.category && !t.deactivated);
+  const treatmentOf = (t: Transaction) => CATEGORY_META[t.category!].treatment;
 
-  const income = rows.filter((t) => t.direction === "income");
-  const expenses = rows.filter((t) => t.direction === "expense");
-
-  const totalIncomePence = sumPence(income.map((t) => t.amountPence));
-
+  const totalIncomePence = sumPence(
+    rows.filter((t) => treatmentOf(t) === "income").map((t) => t.amountPence),
+  );
   const financeCostsPence = sumPence(
-    expenses.filter((t) => t.category && CATEGORY_META[t.category].isFinanceCost).map((t) => t.amountPence),
+    rows.filter((t) => treatmentOf(t) === "finance_cost").map((t) => t.amountPence),
   );
   const deductibleExpensesPence = sumPence(
-    expenses.filter((t) => t.category && !CATEGORY_META[t.category].isFinanceCost).map((t) => t.amountPence),
+    rows.filter((t) => treatmentOf(t) === "allowable_expense").map((t) => t.amountPence),
   );
 
   const totalExpensesPence = deductibleExpensesPence + financeCostsPence;
@@ -62,6 +63,7 @@ function buildBoxes(rows: Transaction[]): Sa105Box[] {
   for (const t of rows) {
     if (!t.category) continue;
     const meta = CATEGORY_META[t.category];
+    if (meta.sa105Box === "—") continue; // excluded / capital — not on SA105
     const existing = byBox.get(meta.sa105Box);
     const amount = (existing?.amount ?? 0) + t.amountPence;
     byBox.set(meta.sa105Box, { label: meta.sa105BoxLabel, amount });

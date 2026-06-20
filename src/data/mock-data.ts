@@ -14,14 +14,21 @@
 import type {
   Account,
   BankAccount,
+  Company,
   ComplianceDocument,
+  InsurancePolicy,
   Membership,
+  Mortgage,
   MtdObligation,
   MtdSubmission,
+  Portfolio,
   Property,
+  PropertyNote,
+  Reminder,
   Tenancy,
   Transaction,
   User,
+  Valuation,
 } from "@/lib/types";
 import { poundsToPence } from "@/lib/money";
 
@@ -44,6 +51,22 @@ export const memberships: Membership[] = [
   { userId: "u_priya", accountId: "acc_1", role: "accountant", delegated: true },
 ];
 
+export const companies: Company[] = [
+  {
+    id: "co_walpole",
+    accountId: "acc_1",
+    name: "Walpole Lettings Ltd",
+    companyNumber: "12345678",
+    incorporationDate: "2021-01-15",
+    directorsLoanBalancePence: poundsToPence(42000),
+  },
+];
+
+export const portfolios: Portfolio[] = [
+  { id: "pf_personal", accountId: "acc_1", name: "Personal — Default portfolio", type: "personal", isDefault: true },
+  { id: "pf_business", accountId: "acc_1", name: "Walpole Lettings Ltd", type: "business", companyId: "co_walpole" },
+];
+
 export const properties: Property[] = [
   {
     id: "p_oak",
@@ -52,6 +75,7 @@ export const properties: Property[] = [
     address: { line1: "12 Oakfield Road", city: "Bristol", postcode: "BS6 7AA" },
     type: "flat",
     bedrooms: 2,
+    portfolioId: "pf_personal",
     ownership: [{ userId: "u_ben", share: 100 }],
     purchasePricePence: poundsToPence(285000),
     purchaseDate: "2019-09-12",
@@ -63,9 +87,10 @@ export const properties: Property[] = [
     address: { line1: "4 Station Mews", city: "Bath", postcode: "BA1 2QR" },
     type: "terraced",
     bedrooms: 3,
+    portfolioId: "pf_personal",
     ownership: [
-      { userId: "u_ben", share: 60 },
-      { userId: "u_sarah", share: 40 },
+      { userId: "u_ben", share: 50 },
+      { userId: "u_sarah", share: 50 },
     ],
     purchasePricePence: poundsToPence(410000),
     purchaseDate: "2021-03-30",
@@ -82,9 +107,61 @@ export const properties: Property[] = [
     },
     type: "flat",
     bedrooms: 1,
+    portfolioId: "pf_business",
     ownership: [{ userId: "u_ben", share: 100 }],
     purchasePricePence: poundsToPence(230000),
     purchaseDate: "2023-06-01",
+  },
+];
+
+// Free-text notes kept against a property.
+export const propertyNotes: PropertyNote[] = [
+  { id: "note_oak_1", propertyId: "p_oak", body: "Tenant reported a slow-draining bathroom sink — booked PlumbRight for the 24th.", author: "Benjamin Walpole", createdAt: "2026-05-18T09:12:00.000Z" },
+  { id: "note_oak_2", propertyId: "p_oak", body: "Buildings insurance renews mid-June — shop around before auto-renewal.", author: "Benjamin Walpole", createdAt: "2026-06-02T16:40:00.000Z" },
+  { id: "note_station_1", propertyId: "p_station", tenancyId: "ten_station", body: "June rent late again — chase A Bennett and check the standing order is still set up.", author: "Sarah Walpole", createdAt: "2026-06-12T11:05:00.000Z" },
+];
+
+export const reminders: Reminder[] = [
+  { id: "rem_gas", accountId: "acc_1", name: "Book gas safety inspection", description: "Oakfield Road CP12 renewal due — arrange an engineer.", dueDate: "2026-07-08", status: "open", propertyId: "p_oak" },
+  { id: "rem_arrears", accountId: "acc_1", name: "Chase Station Mews arrears", description: "Aisha Bennett — June rent outstanding.", dueDate: "2026-06-25", status: "open", propertyId: "p_station", tenancyId: "ten_station" },
+  { id: "rem_mtd", accountId: "acc_1", name: "File Q4 MTD update", description: "2025/26 final quarter submitted to HMRC.", dueDate: "2026-05-07", status: "completed", completedAt: "2026-05-05T09:30:00.000Z" },
+];
+
+// Insurance policies per property (powers the Insurance tab).
+export const insurancePolicies: InsurancePolicy[] = [
+  { id: "ins_oak", propertyId: "p_oak", type: "landlord", provider: "Aviva", policyNumber: "AV-7741-LB", premiumPence: poundsToPence(320), startDate: "2025-06-16", expiryDate: "2026-06-15" },
+  { id: "ins_station", propertyId: "p_station", type: "buildings", provider: "Direct Line", policyNumber: "DL-22918", premiumPence: poundsToPence(415), startDate: "2026-02-01", expiryDate: "2027-02-01" },
+  { id: "ins_harbour", propertyId: "p_harbour", type: "block", provider: "Zurich (via freeholder)", policyNumber: "ZB-50431", premiumPence: poundsToPence(0), startDate: "2025-12-20", expiryDate: "2026-12-20" },
+];
+
+// Current valuations — all three properties valued above their purchase price
+// (shows capital growth in Market Risk). Drives valuation coverage = 3/3.
+export const valuations: Valuation[] = [
+  { id: "val_oak", propertyId: "p_oak", amountPence: poundsToPence(320000), date: "2026-01-15", source: "estimate" },
+  { id: "val_station", propertyId: "p_station", amountPence: poundsToPence(445000), date: "2026-02-02", source: "surveyor" },
+  { id: "val_harbour", propertyId: "p_harbour", amountPence: poundsToPence(248000), date: "2026-03-10", source: "avm" },
+];
+
+// Mortgages on two of three properties (Harbourside is owned outright), so
+// mortgage coverage = 2/3 and the data-completeness indicator is < 100%.
+export const mortgages: Mortgage[] = [
+  {
+    id: "mtg_oak",
+    propertyId: "p_oak",
+    lender: "Barclays BTL",
+    balancePence: poundsToPence(190000),
+    monthlyPaymentPence: poundsToPence(410),
+    interestRateBps: 489,
+    repaymentType: "interest_only",
+  },
+  {
+    id: "mtg_station",
+    propertyId: "p_station",
+    lender: "NatWest BTL",
+    balancePence: poundsToPence(280000),
+    monthlyPaymentPence: poundsToPence(640),
+    interestRateBps: 512,
+    repaymentType: "interest_only",
   },
 ];
 
@@ -139,6 +216,9 @@ export const bankAccounts: BankAccount[] = [
     maskedNumber: "•••• 4421",
     status: "connected",
     lastSyncedAt: "2026-06-20T07:45:00.000Z",
+    consentExpiresAt: "2026-08-28T00:00:00.000Z", // ~69 days away
+    connectionId: "conn_barclays_acc_1",
+    externalAccountId: "conn_barclays_acc_1_current",
   },
   {
     id: "ba_starling",
@@ -148,6 +228,9 @@ export const bankAccounts: BankAccount[] = [
     maskedNumber: "•••• 9087",
     status: "needs_reauth",
     lastSyncedAt: "2026-05-29T06:10:00.000Z",
+    consentExpiresAt: "2026-06-10T00:00:00.000Z", // expired — needs reconnection
+    connectionId: "conn_starling_acc_1",
+    externalAccountId: "conn_starling_acc_1_current",
   },
 ];
 
@@ -159,18 +242,18 @@ function tx(t: Omit<Transaction, "id" | "accountId">): Transaction {
 }
 
 export const transactions: Transaction[] = [
-  // --- Oakfield Road ---
-  tx({ propertyId: "p_oak", tenancyId: "ten_oak", date: "2026-04-08", direction: "income", amountPence: poundsToPence(1250), category: "rent", description: "Rent — J Fletcher", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
-  tx({ propertyId: "p_oak", tenancyId: "ten_oak", date: "2026-05-01", direction: "income", amountPence: poundsToPence(1250), category: "rent", description: "Rent — J Fletcher", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
-  tx({ propertyId: "p_oak", tenancyId: "ten_oak", date: "2026-06-01", direction: "income", amountPence: poundsToPence(1250), category: "rent", description: "Rent — J Fletcher", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
+  // --- Oakfield Road --- (rent due on the 1st; April landed on the 8th: bank date ≠ due date)
+  tx({ propertyId: "p_oak", tenancyId: "ten_oak", date: "2026-04-08", rentDueDate: "2026-04-01", direction: "income", amountPence: poundsToPence(1250), category: "rent", description: "Rent — J Fletcher", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
+  tx({ propertyId: "p_oak", tenancyId: "ten_oak", date: "2026-05-01", rentDueDate: "2026-05-01", direction: "income", amountPence: poundsToPence(1250), category: "rent", description: "Rent — J Fletcher", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
+  tx({ propertyId: "p_oak", tenancyId: "ten_oak", date: "2026-06-01", rentDueDate: "2026-06-01", direction: "income", amountPence: poundsToPence(1250), category: "rent", description: "Rent — J Fletcher", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
   tx({ propertyId: "p_oak", date: "2026-04-10", direction: "expense", amountPence: poundsToPence(320), category: "rent_rates_insurance", description: "Landlord insurance — annual", source: "manual", reconcile: "reconciled" }),
   tx({ propertyId: "p_oak", date: "2026-04-28", direction: "expense", amountPence: poundsToPence(410), category: "finance_costs", description: "BTL mortgage interest", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
   tx({ propertyId: "p_oak", date: "2026-05-28", direction: "expense", amountPence: poundsToPence(410), category: "finance_costs", description: "BTL mortgage interest", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
-  tx({ propertyId: "p_oak", date: "2026-05-20", direction: "expense", amountPence: poundsToPence(186), category: "repairs_maintenance", description: "Boiler service & repair — PlumbRight", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
+  tx({ propertyId: "p_oak", date: "2026-05-20", direction: "expense", amountPence: poundsToPence(186), category: "repairs_maintenance", description: "Boiler service & repair — PlumbRight", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays", notes: "Annual service plus thermostat replacement.", receiptRef: "/files/receipts/plumbright-may.pdf" }),
 
   // --- Station Mews (in arrears: June rent missing) ---
-  tx({ propertyId: "p_station", tenancyId: "ten_station", date: "2026-04-06", direction: "income", amountPence: poundsToPence(1600), category: "rent", description: "Rent — A Bennett", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
-  tx({ propertyId: "p_station", tenancyId: "ten_station", date: "2026-05-05", direction: "income", amountPence: poundsToPence(1600), category: "rent", description: "Rent — A Bennett", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
+  tx({ propertyId: "p_station", tenancyId: "ten_station", date: "2026-04-06", rentDueDate: "2026-04-05", direction: "income", amountPence: poundsToPence(1600), category: "rent", description: "Rent — A Bennett", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
+  tx({ propertyId: "p_station", tenancyId: "ten_station", date: "2026-05-05", rentDueDate: "2026-05-05", direction: "income", amountPence: poundsToPence(1600), category: "rent", description: "Rent — A Bennett", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
   // NOTE: no June rent for Station Mews — this drives the arrears alert.
   tx({ propertyId: "p_station", date: "2026-04-06", direction: "expense", amountPence: poundsToPence(192), category: "professional_fees", description: "Letting agent management fee", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
   tx({ propertyId: "p_station", date: "2026-05-05", direction: "expense", amountPence: poundsToPence(192), category: "professional_fees", description: "Letting agent management fee", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
@@ -178,14 +261,21 @@ export const transactions: Transaction[] = [
   tx({ propertyId: "p_station", date: "2026-05-28", direction: "expense", amountPence: poundsToPence(640), category: "finance_costs", description: "BTL mortgage interest", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
 
   // --- Harbourside ---
-  tx({ propertyId: "p_harbour", tenancyId: "ten_harbour", date: "2026-04-15", direction: "income", amountPence: poundsToPence(1100), category: "rent", description: "Rent — M Costa", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
-  tx({ propertyId: "p_harbour", tenancyId: "ten_harbour", date: "2026-05-15", direction: "income", amountPence: poundsToPence(1100), category: "rent", description: "Rent — M Costa", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
+  tx({ propertyId: "p_harbour", tenancyId: "ten_harbour", date: "2026-04-15", rentDueDate: "2026-04-15", direction: "income", amountPence: poundsToPence(1100), category: "rent", description: "Rent — M Costa", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
+  tx({ propertyId: "p_harbour", tenancyId: "ten_harbour", date: "2026-05-15", rentDueDate: "2026-05-15", direction: "income", amountPence: poundsToPence(1100), category: "rent", description: "Rent — M Costa", source: "bank_feed", reconcile: "reconciled", bankAccountId: "ba_barclays" }),
   tx({ propertyId: "p_harbour", date: "2026-04-20", direction: "expense", amountPence: poundsToPence(95), category: "rent_rates_insurance", description: "Service charge & ground rent", source: "manual", reconcile: "reconciled" }),
 
   // --- Recent bank-feed items needing attention (unreconciled / uncategorised) ---
-  tx({ propertyId: "p_harbour", tenancyId: "ten_harbour", date: "2026-06-15", direction: "income", amountPence: poundsToPence(1100), category: "rent", description: "Rent — M Costa", source: "bank_feed", reconcile: "unreconciled", bankAccountId: "ba_barclays" }),
+  tx({ propertyId: "p_harbour", tenancyId: "ten_harbour", date: "2026-06-15", rentDueDate: "2026-06-15", direction: "income", amountPence: poundsToPence(1100), category: "rent", description: "Rent — M Costa", source: "bank_feed", reconcile: "unreconciled", bankAccountId: "ba_barclays" }),
+  // Station Mews June rent HAS arrived, but is un-categorised/unlinked — so the
+  // arrears alert still fires until the user categorises it as rent + links the
+  // tenancy. The payee "BENNETT" lets the rules engine auto-suggest the match.
+  tx({ date: "2026-06-08", direction: "income", amountPence: poundsToPence(1600), description: "FASTER PAYMENT A BENNETT", source: "bank_feed", reconcile: "unreconciled", bankAccountId: "ba_barclays" }),
   tx({ date: "2026-06-18", direction: "expense", amountPence: poundsToPence(48), description: "SCREWFIX BRISTOL", source: "bank_feed", reconcile: "unreconciled", bankAccountId: "ba_barclays" }),
   tx({ propertyId: "p_oak", date: "2026-06-19", direction: "expense", amountPence: poundsToPence(75), category: "professional_fees", description: "Accountancy fee — monthly", source: "bank_feed", reconcile: "unreconciled", bankAccountId: "ba_barclays" }),
+  // A duplicate bank import, deactivated so it doesn't double-count (hidden
+  // unless "show deactivated" is on).
+  tx({ propertyId: "p_oak", tenancyId: "ten_oak", date: "2026-05-02", rentDueDate: "2026-05-01", direction: "income", amountPence: poundsToPence(1250), category: "rent", description: "Rent — J Fletcher (duplicate)", source: "bank_feed", reconcile: "ignored", deactivated: true, bankAccountId: "ba_barclays" }),
 ];
 
 export const complianceDocuments: ComplianceDocument[] = [
