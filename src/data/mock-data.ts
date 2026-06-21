@@ -16,6 +16,7 @@ import type {
   BankAccount,
   Company,
   ComplianceDocument,
+  DirectorLoanMovement,
   InsurancePolicy,
   Membership,
   Mortgage,
@@ -42,6 +43,7 @@ export const account: Account = {
   id: "acc_1",
   name: "Walpole Property Holdings",
   type: "portfolio",
+  timeZone: "Europe/London",
   mtd: { enrolled: true, utr: "1234567890" },
 };
 
@@ -60,6 +62,17 @@ export const companies: Company[] = [
     incorporationDate: "2021-01-15",
     directorsLoanBalancePence: poundsToPence(42000),
   },
+];
+
+// Movements on each director's loan account. The running balance (advances less
+// repayments) reconciles to the company's directorsLoanBalancePence.
+export const directorLoanMovements: DirectorLoanMovement[] = [
+  { id: "dl_1", companyId: "co_walpole", directorUserId: "u_ben", date: "2025-06-10", direction: "advance", amountPence: poundsToPence(40000), note: "Deposit funding for Harbourside purchase" },
+  { id: "dl_2", companyId: "co_walpole", directorUserId: "u_ben", date: "2025-11-02", direction: "repayment", amountPence: poundsToPence(6000), note: "Partial repayment" },
+  { id: "dl_3", companyId: "co_walpole", directorUserId: "u_sarah", date: "2025-07-21", direction: "advance", amountPence: poundsToPence(12000), note: "Refurbishment costs" },
+  { id: "dl_4", companyId: "co_walpole", directorUserId: "u_sarah", date: "2026-02-14", direction: "repayment", amountPence: poundsToPence(4000), note: "Dividend offset" },
+  { id: "dl_5", companyId: "co_walpole", directorUserId: "u_ben", date: "2026-05-09", direction: "advance", amountPence: poundsToPence(5000), note: "Service charge shortfall" },
+  { id: "dl_6", companyId: "co_walpole", directorUserId: "u_sarah", date: "2026-06-03", direction: "repayment", amountPence: poundsToPence(2000), note: "Quarterly repayment" },
 ];
 
 export const portfolios: Portfolio[] = [

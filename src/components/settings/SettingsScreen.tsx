@@ -3,7 +3,9 @@
 import { ProfileSection, EmailSection, PasswordSection } from "./ProfileSection";
 import { MobileSection } from "./MobileSection";
 import { TwoFactorSection } from "./TwoFactorSection";
-import { LocaleSection, SubscriptionSection, PreferencesSection } from "./AccountSections";
+import { LocaleSection, SubscriptionSection } from "./AccountSections";
+import { NotificationPreferencesSection } from "./NotificationPreferencesSection";
+import { PrivacySection } from "./PrivacySection";
 import { TeamSection } from "./TeamSection";
 import type { SettingsData } from "./types";
 
@@ -21,9 +23,12 @@ export function SettingsScreen({ data }: { data: SettingsData }) {
       {isOwner ? (
         <>
           <LocaleSection account={data.account} taxYearOptions={data.taxYearOptions} />
-          <SubscriptionSection account={data.account} />
-          <PreferencesSection account={data.account} />
+          <div id="subscription" className="scroll-mt-20">
+            <SubscriptionSection />
+          </div>
+          <NotificationPreferencesSection />
           <TeamSection />
+          <PrivacySection accountName={data.accountName} />
         </>
       ) : null}
     </div>

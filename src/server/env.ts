@@ -12,6 +12,8 @@ export const env = {
     documentStorage: process.env.DOCUMENT_STORAGE_PROVIDER ?? "mock",
     mailer: process.env.MAILER_PROVIDER ?? "console",
     sms: process.env.SMS_PROVIDER ?? "console",
+    push: process.env.PUSH_PROVIDER ?? "console",
+    payments: process.env.PAYMENT_PROVIDER ?? "mock",
   },
   s3: {
     endpoint: process.env.S3_ENDPOINT,

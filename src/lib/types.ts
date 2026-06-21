@@ -37,6 +37,8 @@ export interface Account {
   id: ID;
   name: string;
   type: AccountType;
+  /** IANA time zone the account's dates/times are presented in. */
+  timeZone: string;
   /** HMRC Making Tax Digital enrolment status for this account. */
   mtd: {
     enrolled: boolean;
@@ -120,6 +122,19 @@ export interface Company {
   incorporationDate?: string;
   /** Outstanding directors' loan balance owed to/by the directors. */
   directorsLoanBalancePence: Pence;
+}
+
+/** A single movement on a director's loan account with a company. */
+export interface DirectorLoanMovement {
+  id: ID;
+  companyId: ID;
+  /** The director (a User). */
+  directorUserId: ID;
+  date: string;
+  /** advance = director lends to company; repayment = company repays director. */
+  direction: "advance" | "repayment";
+  amountPence: Pence;
+  note?: string;
 }
 
 export type InsuranceType = "buildings" | "contents" | "landlord" | "rent_guarantee" | "block";
@@ -274,13 +289,38 @@ export interface Sa105Box {
   amountPence: Pence;
 }
 
+/** Income presented in SA105 structure. */
+export interface Sa105Income {
+  rentsReceivedPence: Pence; // box 20
+  premiumsPence: Pence; // box 22 (lease premiums)
+  otherIncomePence: Pence; // box 20 (other property income)
+}
+
+/** An allowable expense category total (excludes finance costs + capital). */
+export interface Sa105ExpenseLine {
+  category: TransactionCategory;
+  label: string;
+  sa105Box: string;
+  amountPence: Pence;
+}
+
+export type TaxBand = "none" | "basic" | "higher" | "additional";
+
 export interface TaxEstimate {
   taxYear: string; // e.g. "2026/27"
+  /** Which versioned ruleset produced this (handles future-year fallback). */
+  appliedTaxYear: string;
+  income: Sa105Income;
+  allowableExpenses: Sa105ExpenseLine[];
   totalIncomePence: Pence;
   totalExpensesPence: Pence;
   /** Allowable finance costs get basic-rate (20%) relief, not full deduction. */
   financeCostsPence: Pence;
+  /** The basic-rate tax reducer applied for those finance costs. */
+  financeReliefPence: Pence;
   taxableProfitPence: Pence;
+  /** Highest marginal band the taxable profit reaches. */
+  taxBand: TaxBand;
   /** Indicative tax due — an ESTIMATE, not advice. */
   estimatedTaxPence: Pence;
   boxes: Sa105Box[];

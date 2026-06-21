@@ -1,115 +1,44 @@
-import { PageHeader, Card, CardHeader, StatTile, Badge, Button } from "@/components/ui";
+import { redirect } from "next/navigation";
+import { PageHeader, Badge } from "@/components/ui";
 import { SectionCoachmark } from "@/components/coachmarks/SectionCoachmark";
-import { getTransactions } from "@/services/repository";
-import { getPerPropertyPnl, getYtdTotals } from "@/lib/portfolio";
+import { ReportsExplorer } from "@/components/reports/ReportsExplorer";
+import { LockedOverlay } from "@/components/billing/LockedOverlay";
+import { getSession } from "@/server/auth/session";
+import { buildDataset } from "@/server/reports/service";
+import type { ReportFilters } from "@/lib/reports/build";
 import { taxYearBounds, taxYearFor } from "@/lib/dates";
+import { subscriptionView } from "@/lib/subscription";
 import { now } from "@/lib/clock";
-import { formatGBP, sumPence } from "@/lib/money";
-import { CATEGORY_META } from "@/lib/sa105";
-import type { TransactionCategory } from "@/lib/types";
 
-export default function ReportsPage() {
+export const dynamic = "force-dynamic";
+
+export default async function ReportsPage() {
+  const session = await getSession();
+  if (!session) redirect("/login");
+
   const taxYear = taxYearFor(now());
   const { start, end } = taxYearBounds(taxYear);
-  const ytd = getYtdTotals(taxYear);
-  const pnl = getPerPropertyPnl(taxYear);
-
-  // Expense breakdown by SA105 category.
-  const expenses = getTransactions().filter(
-    (t) => t.direction === "expense" && t.category && t.date >= start && t.date <= end,
-  );
-  const byCategory = new Map<TransactionCategory, number>();
-  for (const t of expenses) {
-    if (!t.category) continue;
-    byCategory.set(t.category, (byCategory.get(t.category) ?? 0) + t.amountPence);
-  }
-  const categoryRows = [...byCategory.entries()]
-    .map(([category, amount]) => ({ category, amount }))
-    .sort((a, b) => b.amount - a.amount);
-  const totalExpenses = sumPence(categoryRows.map((r) => r.amount));
+  const defaultFilters: ReportFilters = { from: start, to: end, portfolioId: "" };
+  const entitled = subscriptionView(session.account.subscription, now()).entitled;
 
   return (
     <>
       <SectionCoachmark section="reports" />
       <PageHeader
         title="Reports"
-        description={`Income, expenses and profit for ${taxYear}.`}
-        actions={
-          <>
-            <Badge tone="neutral">Tax year {taxYear}</Badge>
-            <Button variant="secondary">Export CSV</Button>
-          </>
-        }
+        description="A catalogue of report types — filter by date range and portfolio, view on screen, and export to PDF or CSV."
+        actions={<Badge tone="neutral">Tax year {taxYear}</Badge>}
       />
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatTile label="Total income" value={formatGBP(ytd.incomePence, { showPence: false })} tone="success" />
-        <StatTile label="Total expenses" value={formatGBP(ytd.expensesPence, { showPence: false })} />
-        <StatTile label="Net profit" value={formatGBP(ytd.netPence, { showPence: false })} tone={ytd.netPence >= 0 ? "brand" : "danger"} />
-      </div>
-
-      <Card>
-        <CardHeader title="Profit & loss by property" subtitle="Net = income − expenses for the tax year" />
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-400">
-                <th className="px-5 py-3 font-medium">Property</th>
-                <th className="px-5 py-3 text-right font-medium">Income</th>
-                <th className="px-5 py-3 text-right font-medium">Expenses</th>
-                <th className="px-5 py-3 text-right font-medium">Net</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {pnl.map((row) => (
-                <tr key={row.property.id} className="hover:bg-slate-50">
-                  <td className="px-5 py-3 font-medium text-slate-900">{row.property.nickname}</td>
-                  <td className="px-5 py-3 text-right text-emerald-600">{formatGBP(row.incomePence, { showPence: false })}</td>
-                  <td className="px-5 py-3 text-right text-slate-700">{formatGBP(row.expensesPence, { showPence: false })}</td>
-                  <td className={`px-5 py-3 text-right font-semibold ${row.netPence >= 0 ? "text-slate-900" : "text-red-600"}`}>
-                    {formatGBP(row.netPence, { showPence: false })}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-slate-200 bg-slate-50 font-semibold">
-                <td className="px-5 py-3 text-slate-900">Total</td>
-                <td className="px-5 py-3 text-right text-emerald-700">{formatGBP(ytd.incomePence, { showPence: false })}</td>
-                <td className="px-5 py-3 text-right text-slate-800">{formatGBP(ytd.expensesPence, { showPence: false })}</td>
-                <td className="px-5 py-3 text-right text-slate-900">{formatGBP(ytd.netPence, { showPence: false })}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </Card>
-
-      <Card>
-        <CardHeader title="Where the money goes" subtitle="Expenses by SA105 category" />
-        <ul className="space-y-4 p-5">
-          {categoryRows.map((row) => {
-            const pct = totalExpenses === 0 ? 0 : Math.round((row.amount / totalExpenses) * 100);
-            return (
-              <li key={row.category}>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium text-slate-800">
-                    {CATEGORY_META[row.category].label}
-                    <span className="ml-2 font-mono text-xs text-slate-400">
-                      box {CATEGORY_META[row.category].sa105Box}
-                    </span>
-                  </span>
-                  <span className="text-slate-600">
-                    {formatGBP(row.amount, { showPence: false })} · {pct}%
-                  </span>
-                </div>
-                <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div className="h-full rounded-full bg-brand-500" style={{ width: `${pct}%` }} />
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
+      {entitled ? (
+        // Premium data is only built/sent when the account is entitled.
+        <ReportsExplorer dataset={buildDataset()} defaultFilters={defaultFilters} />
+      ) : (
+        <LockedOverlay
+          variant="data"
+          canManageBilling={session.role === "owner"}
+          message="Reports unlock when you subscribe. Add a payment method to view and export your full financial reports."
+        />
+      )}
     </>
   );
 }

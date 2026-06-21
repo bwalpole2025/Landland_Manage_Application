@@ -4,8 +4,11 @@
 import { prisma } from "@/server/db";
 import { providers } from "@/server/providers";
 import { env } from "@/server/env";
+import { now as clockNow } from "@/lib/clock";
+import { trialEndFrom } from "@/lib/subscription";
 import { hashPassword, verifyPassword } from "./password";
 import { verifyTotp } from "./totp";
+import { decryptSecret } from "@/server/security/encryption";
 import {
   createEmailVerificationToken,
   consumeEmailVerificationToken,
@@ -53,7 +56,13 @@ export async function registerUser(input: RegisterInput): Promise<{ userId: stri
 
   const user = await prisma.$transaction(async (tx) => {
     const account = await tx.account.create({
-      data: { name: `${input.name}'s account`, type: "INDIVIDUAL" },
+      data: {
+        name: `${input.name}'s account`,
+        type: "INDIVIDUAL",
+        // Every new account starts a 30-day free trial.
+        subscriptionStatus: "TRIALING",
+        trialEndsAt: trialEndFrom(clockNow()),
+      },
     });
     const created = await tx.user.create({
       data: { email, firstName, lastName, passwordHash, accountId: account.id, role: "OWNER" },
@@ -120,7 +129,7 @@ export async function authenticate(input: LoginInput): Promise<{ userId: string;
 
   if (user.twoFactorEnabled) {
     if (!input.totp) throw new AuthError("TOTP_REQUIRED");
-    if (!user.totpSecret || !verifyTotp(input.totp, user.totpSecret)) {
+    if (!user.totpSecret || !verifyTotp(input.totp, decryptSecret(user.totpSecret))) {
       throw new AuthError("TOTP_INVALID");
     }
   }

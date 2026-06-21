@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Card, Badge, Button } from "@/components/ui";
 import { Tabs } from "@/components/ds/Tabs";
 import { PropertyIcon, ChevronRightIcon, LockIcon, PlusIcon } from "@/components/icons";
+import { AddPropertyModal, type AddedProperty } from "./AddPropertyModal";
+import { PROPERTY_TYPE_LABELS } from "@/lib/labels";
 import { formatGBP } from "@/lib/money";
 import { taxYearBounds, formatDate } from "@/lib/dates";
 import type { PropertyFigures } from "@/lib/properties";
@@ -72,17 +74,45 @@ export function PropertiesScreen({ summary, portfolios, taxYears, cards, insuran
   const [portfolio, setPortfolio] = useState("");
   const [taxYear, setTaxYear] = useState(taxYears[0]);
   const [sort, setSort] = useState("name");
+  const [addOpen, setAddOpen] = useState(false);
+  // Optimistically-added properties (the server action persists them too).
+  const [extraCards, setExtraCards] = useState<PropertyCardData[]>([]);
+
+  const allCards = useMemo(() => {
+    const seen = new Set(cards.map((c) => c.id));
+    return [...cards, ...extraCards.filter((c) => !seen.has(c.id))];
+  }, [cards, extraCards]);
 
   const byPortfolio = <T extends { portfolioId: string }>(items: T[]) =>
     portfolio ? items.filter((i) => i.portfolioId === portfolio) : items;
 
+  const onPropertyAdded = (p: AddedProperty) => {
+    const zero = { incomePence: 0, expensesPence: 0, profitPence: 0, arrearsPence: 0 };
+    const figuresByYear = Object.fromEntries(taxYears.map((y) => [y, zero]));
+    setExtraCards((prev) => [
+      ...prev,
+      {
+        id: p.id,
+        nickname: p.nickname,
+        addressLine: `${p.line1}, ${p.city} ${p.postcode}`,
+        typeLabel: PROPERTY_TYPE_LABELS[p.type],
+        bedrooms: p.bedrooms,
+        portfolioId: p.portfolioId || portfolios[0]?.id || "",
+        portfolioName: portfolios.find((x) => x.id === p.portfolioId)?.name ?? portfolios[0]?.name ?? "Portfolio",
+        occupied: false,
+        rentPence: 0,
+        figuresByYear,
+      },
+    ]);
+  };
+
   const visibleCards = useMemo(() => {
-    const list = byPortfolio(cards);
+    const list = byPortfolio(allCards);
     return [...list].sort((a, b) =>
       sort === "name" ? a.nickname.localeCompare(b.nickname) : b.rentPence - a.rentPence,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cards, portfolio, sort]);
+  }, [allCards, portfolio, sort]);
 
   const visibleInsurance = byPortfolio(insurance);
   const visibleMortgages = byPortfolio(mortgages);
@@ -98,9 +128,11 @@ export function PropertiesScreen({ summary, portfolios, taxYears, cards, insuran
         </div>
         <div className="flex items-center gap-2">
           <Button variant="secondary">Import Properties</Button>
-          <Button>Add Property</Button>
+          <Button onClick={() => setAddOpen(true)}>Add Property</Button>
         </div>
       </div>
+
+      <AddPropertyModal open={addOpen} onClose={() => setAddOpen(false)} portfolios={portfolios} onAdded={onPropertyAdded} />
 
       {/* Summary metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

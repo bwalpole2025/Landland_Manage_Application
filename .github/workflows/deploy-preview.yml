@@ -1,0 +1,41 @@
+name: Preview Deploy
+
+# Creates a per-PR preview deployment on Vercel. No-ops cleanly when the Vercel
+# secrets aren't configured (e.g. on forks), so it never blocks CI.
+on:
+  pull_request:
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Vercel configuration
+        id: guard
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "Vercel secrets not set — skipping preview deploy."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.configured == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Deploy preview to Vercel
+        if: steps.guard.outputs.configured == 'true'
+        run: |
+          npm i -g vercel@latest
+          vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+          vercel build --token="$VERCEL_TOKEN"
+          URL=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          echo "🔗 Preview deployed: $URL" >> "$GITHUB_STEP_SUMMARY"

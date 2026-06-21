@@ -96,3 +96,16 @@ export function formatDateTime(isoDateTime: string): string {
     minute: "2-digit",
   });
 }
+
+/** Format an instant in a specific IANA time zone (the account's). */
+export function formatDateTimeInTimeZone(isoDateTime: string, timeZone: string): string {
+  return new Date(isoDateTime).toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+    timeZoneName: "short",
+  });
+}

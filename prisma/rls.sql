@@ -15,7 +15,8 @@ DECLARE
   tbl text;
   tenant_tables text[] := ARRAY[
     'Property', 'Tenancy', 'Tenant', 'Transaction',
-    'ComplianceDocument', 'BankAccount', 'MtdObligation', 'MtdSubmission'
+    'Document', 'BankAccount', 'MtdObligation', 'MtdSubmission',
+    'Notification', 'NotificationPreference', 'PushDevice', 'AuditLog'
   ];
 BEGIN
   FOREACH tbl IN ARRAY tenant_tables LOOP

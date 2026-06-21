@@ -29,7 +29,7 @@ export interface SessionAccount {
   name: string;
   type: UiAccountType;
   mtd: { enrolled: boolean; utr?: string };
-  subscription: { status: SubscriptionStatus; trialEndsAt: string | null };
+  subscription: { status: SubscriptionStatus; trialEndsAt: string | null; billingStartsAt: string | null };
 }
 
 export interface AppSession {
@@ -102,6 +102,7 @@ export async function validateSessionToken(rawToken: string): Promise<AppSession
       subscription: {
         status: account.subscriptionStatus as SubscriptionStatus,
         trialEndsAt: account.trialEndsAt ? account.trialEndsAt.toISOString() : null,
+        billingStartsAt: account.billingStartsAt ? account.billingStartsAt.toISOString() : null,
       },
     },
     role: ROLE_MAP[membership.role],

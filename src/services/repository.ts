@@ -6,8 +6,10 @@
 
 import {
   account,
+  CURRENT_USER_ID,
   bankAccounts,
   companies,
+  directorLoanMovements,
   complianceDocuments,
   insurancePolicies,
   memberships,
@@ -28,6 +30,7 @@ import type {
   BankAccount,
   Company,
   ComplianceDocument,
+  DirectorLoanMovement,
   InsurancePolicy,
   Membership,
   Mortgage,
@@ -51,6 +54,10 @@ export function getUser(userId: string): User | undefined {
   return users.find((u) => u.id === userId);
 }
 
+export function getUsers(): User[] {
+  return users;
+}
+
 export function getMemberships(): Membership[] {
   return memberships;
 }
@@ -67,6 +74,35 @@ export function getProperties(): Property[] {
 /** All properties including archived (used for history/admin views). */
 export function getAllProperties(): Property[] {
   return properties;
+}
+
+let propertySeq = 0;
+
+export interface CreatePropertyInput {
+  nickname: string;
+  line1: string;
+  city: string;
+  postcode: string;
+  type: Property["type"];
+  bedrooms: number;
+  portfolioId?: string;
+}
+
+/** Add a property to the active portfolio (owned 100% by the current user). */
+export function createProperty(input: CreatePropertyInput): Property {
+  propertySeq += 1;
+  const property: Property = {
+    id: `p_new_${propertySeq}`,
+    accountId: account.id,
+    nickname: input.nickname,
+    address: { line1: input.line1, city: input.city, postcode: input.postcode },
+    type: input.type,
+    bedrooms: input.bedrooms,
+    portfolioId: input.portfolioId ?? portfolios[0]?.id ?? "pf_personal",
+    ownership: [{ userId: CURRENT_USER_ID, share: 100 }],
+  };
+  properties.push(property);
+  return property;
 }
 
 /** A property by id — returns archived ones too, so history is preserved. */
@@ -164,6 +200,10 @@ export function getCompanies(): Company[] {
   return companies;
 }
 
+export function getDirectorLoanMovements(): DirectorLoanMovement[] {
+  return directorLoanMovements;
+}
+
 export function getCompany(id: string | undefined): Company | undefined {
   return id ? companies.find((c) => c.id === id) : undefined;
 }
@@ -250,4 +290,12 @@ export function getMtdSubmissions(): MtdSubmission[] {
 
 export function getSubmissionForObligation(obligationId: string): MtdSubmission | undefined {
   return mtdSubmissions.find((s) => s.obligationId === obligationId);
+}
+
+/** Append (or replace) the submission log entry for an obligation. */
+export function recordMtdSubmission(submission: MtdSubmission): MtdSubmission {
+  const idx = mtdSubmissions.findIndex((s) => s.obligationId === submission.obligationId);
+  if (idx >= 0) mtdSubmissions[idx] = submission;
+  else mtdSubmissions.push(submission);
+  return submission;
 }

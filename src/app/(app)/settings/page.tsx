@@ -48,6 +48,7 @@ export default async function SettingsPage() {
       subscriptionStatus: account.subscriptionStatus,
       trialEndsAt: account.trialEndsAt ? account.trialEndsAt.toISOString() : null,
     },
+    accountName: account.name,
     role: session.role,
     taxYearOptions: taxYearOptions(),
   };

@@ -12,6 +12,8 @@ import {
 } from "./document-storage";
 import { ConsoleMailer, type Mailer } from "./mailer";
 import { ConsoleSms, type Sms } from "./sms";
+import { ConsolePush, type Push } from "./push";
+import { MockPaymentProvider, type PaymentProvider } from "./payments";
 
 function makeBankFeed(): BankFeedProvider {
   switch (env.providers.bankFeed) {
@@ -54,16 +56,38 @@ function makeSms(): Sms {
   }
 }
 
+function makePush(): Push {
+  switch (env.providers.push) {
+    // case "expo": return new ExpoPush();
+    default:
+      return new ConsolePush();
+  }
+}
+
+function makePayments(): PaymentProvider {
+  switch (env.providers.payments) {
+    // case "stripe": return new StripePaymentProvider();
+    default:
+      return new MockPaymentProvider();
+  }
+}
+
 export const providers = {
   bankFeed: makeBankFeed(),
   hmrcMtd: makeHmrcMtd(),
   documentStorage: makeDocumentStorage(),
   mailer: makeMailer(),
   sms: makeSms(),
+  push: makePush(),
+  payments: makePayments(),
 };
+
+export type Providers = typeof providers;
 
 export type { BankFeedProvider } from "./bank-feed";
 export type { HmrcMtdProvider } from "./hmrc-mtd";
 export type { DocumentStorage } from "./document-storage";
 export type { Mailer } from "./mailer";
 export type { Sms } from "./sms";
+export type { Push } from "./push";
+export type { PaymentProvider } from "./payments";

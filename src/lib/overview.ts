@@ -11,6 +11,7 @@ import {
 } from "@/services/repository";
 import type { Pence, Tenancy } from "./types";
 import { sumPence } from "./money";
+import { directionTotals } from "./reports/totals";
 import { computeArrears, rentDueDateOf } from "./arrears";
 import { addressOneLine } from "./labels";
 import { annualYieldPercent, loanToValuePercent, type Frequency } from "./finance";
@@ -52,10 +53,10 @@ export interface PnlSummary {
 export function getLast12MonthsPnl(now: Date = clockNow()): PnlSummary {
   const start = isoMonthsAgo(now, 12);
   const today = todayISO(now);
-  const rows = getTransactions().filter((t) => !t.deactivated && t.date >= start && t.date <= today);
-  const incomePence = sumPence(rows.filter((t) => t.direction === "income").map((t) => t.amountPence));
-  const expensesPence = sumPence(rows.filter((t) => t.direction === "expense").map((t) => t.amountPence));
-  return { hasData: rows.length > 0, incomePence, expensesPence, profitPence: incomePence - expensesPence };
+  const rows = getTransactions().filter((t) => t.date >= start && t.date <= today);
+  // Shared canonical calculation — identical to the Annual Report's P&L section.
+  const { incomePence, expensesPence, netPence } = directionTotals(rows);
+  return { hasData: rows.filter((t) => !t.deactivated).length > 0, incomePence, expensesPence, profitPence: netPence };
 }
 
 // --- Asset analysis ----------------------------------------------------------

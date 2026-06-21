@@ -31,13 +31,4 @@ export const settingsRouter = router({
       await ctx.prisma.account.update({ where: { id: ctx.accountId }, data: input });
       return { ok: true };
     }),
-
-  // Activate the subscription (ends the trial).
-  activateSubscription: ownerOnly.mutation(async ({ ctx }) => {
-    await ctx.prisma.account.update({
-      where: { id: ctx.accountId },
-      data: { subscriptionStatus: "ACTIVE" },
-    });
-    return { ok: true };
-  }),
 });

@@ -23,6 +23,7 @@ export interface SettingsAccount {
 export interface SettingsData {
   user: SettingsUser;
   account: SettingsAccount;
+  accountName: string;
   role: "owner" | "assistant" | "accountant";
   taxYearOptions: string[];
 }

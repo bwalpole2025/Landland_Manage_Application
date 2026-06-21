@@ -28,6 +28,7 @@ jobs:
       DATABASE_URL: postgresql://landland:landland@localhost:5432/landland?schema=public
       APP_URL: http://localhost:3000
       SESSION_COOKIE_NAME: landland_session
+      ENCRYPTION_KEY: ci-test-encryption-key-not-for-production
 
     steps:
       - uses: actions/checkout@v4
@@ -62,3 +63,64 @@ jobs:
 
       - name: Build design-system explorer (Storybook)
         run: npm run build-storybook
+
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: landland
+          POSTGRES_PASSWORD: landland
+          POSTGRES_DB: landland
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U landland"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://landland:landland@localhost:5432/landland?schema=public
+      APP_URL: http://localhost:3000
+      SESSION_COOKIE_NAME: landland_session
+      ENCRYPTION_KEY: ci-test-encryption-key-not-for-production
+      CI: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npm run test:e2e:install
+
+      - name: Prisma generate
+        run: npm run db:generate
+
+      - name: Apply migrations + seed (incl. E2E account)
+        run: |
+          npm run db:migrate
+          npm run db:seed
+
+      - name: Build
+        run: npm run build
+
+      - name: Run E2E happy path
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

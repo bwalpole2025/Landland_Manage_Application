@@ -17,7 +17,17 @@ async function main() {
   // --- Account (top-level tenant) ---
   await prisma.account.upsert({
     where: { id: ACCOUNT_ID },
-    update: { subscriptionStatus: "TRIALING", trialEndsAt: new Date("2026-07-04T00:00:00Z") },
+    update: {
+      subscriptionStatus: "TRIALING",
+      trialEndsAt: new Date("2026-07-04T00:00:00Z"),
+      // Clean trial state (no scheduled billing / card on file).
+      billingStartsAt: null,
+      paymentMethodBrand: null,
+      paymentMethodLast4: null,
+      billingCustomerId: null,
+      billingSubscriptionId: null,
+      termsAcceptedAt: null,
+    },
     create: {
       id: ACCOUNT_ID,
       name: "Walpole Property Holdings",
@@ -62,6 +72,31 @@ async function main() {
     });
   }
 
+  // --- Dedicated E2E account: verified + ACTIVE subscription (ungated) so the
+  // automated happy-path test runs without the trial gate. Page data is read
+  // from the shared mock dataset, so this account only needs to exist + be
+  // entitled + verified.
+  const e2eAccount = await prisma.account.upsert({
+    where: { id: "acc_e2e" },
+    update: { subscriptionStatus: "ACTIVE", trialEndsAt: null },
+    create: { id: "acc_e2e", name: "E2E Test Account", type: "INDIVIDUAL", subscriptionStatus: "ACTIVE", timeZone: "Europe/London" },
+  });
+  const e2eUser = await prisma.user.upsert({
+    where: { email: "e2e@landland.app" },
+    update: { passwordHash, emailVerified: now, role: "OWNER" },
+    create: { id: "user_e2e", accountId: e2eAccount.id, email: "e2e@landland.app", firstName: "E2E", lastName: "Runner", passwordHash, emailVerified: now, role: "OWNER" },
+  });
+  await prisma.membership.upsert({
+    where: { userId_accountId: { userId: e2eUser.id, accountId: e2eAccount.id } },
+    update: { role: "OWNER" },
+    create: { userId: e2eUser.id, accountId: e2eAccount.id, role: "OWNER" },
+  });
+  await prisma.portfolio.upsert({
+    where: { id: "pf_e2e" },
+    update: {},
+    create: { id: "pf_e2e", accountId: e2eAccount.id, name: "Personal — Default", type: "PERSONAL", isDefault: true },
+  });
+
   // --- Reset account-scoped data for idempotency (FK-safe order) ---
   await prisma.reminder.deleteMany({ where: { accountId: ACCOUNT_ID } });
   await prisma.note.deleteMany({ where: { accountId: ACCOUNT_ID } });
@@ -97,7 +132,12 @@ async function main() {
 
   // --- Bank account ---
   const bank = await prisma.bankAccount.create({
-    data: { accountId: ACCOUNT_ID, provider: "mock", bankName: "Barclays", accountName: "Property Current Account", maskedNumber: "•••• 4421", status: "CONNECTED", lastSyncedAt: new Date("2026-06-20T07:45:00Z") },
+    data: { accountId: ACCOUNT_ID, provider: "mock", bankName: "Barclays", accountName: "Property Current Account", maskedNumber: "•••• 4421", status: "CONNECTED", lastSyncedAt: new Date("2026-06-20T07:45:00Z"), consentExpiresAt: new Date("2026-08-28T00:00:00Z") },
+  });
+
+  // A second feed needing re-authorisation → drives a bank-feed notification.
+  await prisma.bankAccount.create({
+    data: { accountId: ACCOUNT_ID, provider: "mock", bankName: "Starling", accountName: "Buy-to-Let Pot", maskedNumber: "•••• 9087", status: "NEEDS_REAUTH", lastSyncedAt: new Date("2026-05-29T06:10:00Z"), consentExpiresAt: new Date("2026-06-10T00:00:00Z") },
   });
 
   // --- Property 1: Oakfield Road (personal, up to date) ---

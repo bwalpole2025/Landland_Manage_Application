@@ -3,6 +3,7 @@
 import type { Job } from "bullmq";
 import { prisma } from "@/server/db";
 import { providers } from "@/server/providers";
+import { recordAudit } from "@/server/security/audit";
 
 export async function processBankFeedPoll(job: Job<{ bankAccountId: string }>): Promise<void> {
   const bank = await prisma.bankAccount.findUnique({ where: { id: job.data.bankAccountId } });
@@ -33,6 +34,16 @@ export async function processBankFeedPoll(job: Job<{ bankAccountId: string }>): 
   }
 
   await prisma.bankAccount.update({ where: { id: bank.id }, data: { lastSyncedAt: new Date() } });
+
+  if (imported > 0) {
+    await recordAudit({
+      accountId: bank.accountId,
+      action: "CREATE",
+      entity: "transaction",
+      summary: `Imported ${imported} transaction(s) from ${bank.bankName} bank feed`,
+      metadata: { bankAccountId: bank.id, imported },
+    });
+  }
   // eslint-disable-next-line no-console
   console.info(`[feed-poll] ${bank.bankName}: imported ${imported} new transactions`);
 }

@@ -10,7 +10,14 @@ export const QUEUE_NAMES = {
   reminders: "reminders",
   arrears: "arrears",
   feedPoll: "feed-poll",
+  notifications: "notifications",
 } as const;
+
+// The repeatable, account-fan-out job that drives the daily notification scan.
+export const DAILY_DISPATCH_JOB = "daily-fan-out";
+// 07:00 every day (worker/server time). Each account's day boundary is still
+// resolved in its own time zone inside the scan.
+export const DAILY_DISPATCH_CRON = "0 7 * * *";
 
 let connection: Redis | null = null;
 
@@ -33,6 +40,7 @@ const queues = {
   reminders: makeQueue(QUEUE_NAMES.reminders),
   arrears: makeQueue(QUEUE_NAMES.arrears),
   feedPoll: makeQueue(QUEUE_NAMES.feedPoll),
+  notifications: makeQueue(QUEUE_NAMES.notifications),
 };
 
 async function add(queue: Queue | null, jobName: string, data: unknown): Promise<void> {
@@ -52,4 +60,25 @@ export const enqueue = {
     add(queues.arrears, "arrears-detection", { accountId }),
   bankFeedPoll: (bankAccountId: string) =>
     add(queues.feedPoll, "bank-feed-poll", { bankAccountId }),
+  // Full multi-category notification scan for one account (e.g. on demand).
+  notificationScan: (accountId: string) =>
+    add(queues.notifications, "notification-scan", { accountId }),
 };
+
+/**
+ * Register the repeatable daily scan. Idempotent — BullMQ dedupes repeatable
+ * jobs by (name + repeat options), so calling this on every worker boot is safe.
+ * No-op when Redis is not configured.
+ */
+export async function registerRepeatableSchedules(): Promise<void> {
+  if (!queues.notifications) {
+    // eslint-disable-next-line no-console
+    console.warn("[jobs] schedules skipped — REDIS_URL not configured");
+    return;
+  }
+  await queues.notifications.add(
+    DAILY_DISPATCH_JOB,
+    {},
+    { repeat: { pattern: DAILY_DISPATCH_CRON }, removeOnComplete: true, removeOnFail: 100 },
+  );
+}

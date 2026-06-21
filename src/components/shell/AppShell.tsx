@@ -3,12 +3,13 @@
 import { useState, type ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { Breadcrumbs } from "./Breadcrumbs";
-import { TrialBanner } from "./TrialBanner";
+import { BillingBanner } from "./BillingBanner";
 import { FloatingHelp } from "./FloatingHelp";
 import { CoachmarkProvider } from "@/components/coachmarks/CoachmarkProvider";
-import { BellIcon } from "@/components/icons";
+import { NotificationBell } from "./NotificationBell";
 import { SIDEBAR_COOKIE, TRIAL_COOKIE } from "./shell-cookies";
 import type { AppSession } from "@/server/auth/session";
+import type { BannerState } from "@/lib/subscription";
 
 function writeCookie(name: string, value: string) {
   document.cookie = `${name}=${value};path=/;max-age=31536000;samesite=lax`;
@@ -16,16 +17,16 @@ function writeCookie(name: string, value: string) {
 
 export interface AppShellProps {
   session: AppSession;
-  trial: { active: boolean; daysLeft: number };
+  banner: BannerState | null;
   initialCollapsed: boolean;
-  trialDismissed: boolean;
+  bannerDismissed: boolean;
   children: ReactNode;
 }
 
-export function AppShell({ session, trial, initialCollapsed, trialDismissed, children }: AppShellProps) {
+export function AppShell({ session, banner, initialCollapsed, bannerDismissed, children }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [trialOpen, setTrialOpen] = useState(trial.active && !trialDismissed);
+  const [bannerOpen, setBannerOpen] = useState(Boolean(banner) && !bannerDismissed);
 
   function toggleCollapse() {
     setCollapsed((prev) => {
@@ -35,13 +36,20 @@ export function AppShell({ session, trial, initialCollapsed, trialDismissed, chi
     });
   }
 
-  function dismissTrial() {
-    setTrialOpen(false);
+  function dismissBanner() {
+    setBannerOpen(false);
     writeCookie(TRIAL_COOKIE, "1");
   }
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
+      {/* Skip link — first tab stop, visible only when focused. */}
+      <a
+        href="#main-content"
+        className="sr-only z-50 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-white"
+      >
+        Skip to main content
+      </a>
       {mobileOpen ? (
         <div className="fixed inset-0 z-30 bg-slate-900/40 lg:hidden" onClick={() => setMobileOpen(false)} />
       ) : null}
@@ -67,19 +75,13 @@ export function AppShell({ session, trial, initialCollapsed, trialDismissed, chi
           </button>
           <Breadcrumbs />
           <div className="ml-auto flex items-center gap-1">
-            <a
-              href="/files/reminders"
-              aria-label="Reminders"
-              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-            >
-              <BellIcon />
-            </a>
+            <NotificationBell />
           </div>
         </header>
 
-        {trialOpen ? <TrialBanner daysLeft={trial.daysLeft} onDismiss={dismissTrial} /> : null}
+        {bannerOpen && banner ? <BillingBanner banner={banner} onDismiss={dismissBanner} /> : null}
 
-        <main className="flex-1 overflow-y-auto">
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto">
           <CoachmarkProvider userId={session.user.id}>
             <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 lg:px-8 lg:py-8">{children}</div>
           </CoachmarkProvider>

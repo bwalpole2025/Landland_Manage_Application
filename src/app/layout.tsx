@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { TRPCProvider } from "@/lib/trpc/client";
+import { CookieConsent } from "@/components/privacy/CookieConsent";
 
 export const metadata: Metadata = {
   title: "Landland — Landlord finance & MTD",
@@ -13,6 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en-GB">
       <body>
         <TRPCProvider>{children}</TRPCProvider>
+        <CookieConsent />
       </body>
     </html>
   );

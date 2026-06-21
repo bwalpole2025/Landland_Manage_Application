@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Badge } from "@/components/ui";
 import { trpc } from "@/lib/trpc/client";
-import { SettingsCard, Labeled, Switch, StatusLine } from "./parts";
+import { formatChargeDate, planPriceLabel } from "@/lib/subscription";
+import { SettingsCard, Labeled, StatusLine } from "./parts";
 import type { SettingsAccount } from "./types";
 
 // --- Time zone + first tax year ---------------------------------------------
@@ -76,53 +77,82 @@ export function LocaleSection({
 
 // --- Subscription ------------------------------------------------------------
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
-}
-
-export function SubscriptionSection({ account }: { account: SettingsAccount }) {
+export function SubscriptionSection() {
   const router = useRouter();
+  const summary = trpc.billing.summary.useQuery();
+  const createCheckout = trpc.billing.createCheckout.useMutation();
+  const cancel = trpc.billing.cancelScheduled.useMutation();
+  const utils = trpc.useUtils();
   const [status, setStatus] = useState<{ kind: "ok" | "err"; message: string } | null>(null);
-  const activate = trpc.settings.activateSubscription.useMutation();
 
-  async function onActivate() {
+  async function onSubscribe() {
     setStatus(null);
     try {
-      await activate.mutateAsync();
-      setStatus({ kind: "ok", message: "Subscription activated. Thank you!" });
-      router.refresh();
+      // Hand off to the provider's hosted checkout (collects the card off-site).
+      const result = await createCheckout.mutateAsync({ returnUrl: "/settings?subscribed=1" });
+      if (result?.url) window.location.href = result.url;
     } catch (err) {
-      setStatus({ kind: "err", message: err instanceof Error ? err.message : "Could not activate." });
+      setStatus({ kind: "err", message: err instanceof Error ? err.message : "Could not start checkout." });
     }
   }
 
-  const { subscriptionStatus: s, trialEndsAt } = account;
-  const trialDaysLeft =
-    trialEndsAt != null
-      ? Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86_400_000))
-      : null;
+  async function onCancel() {
+    setStatus(null);
+    try {
+      await cancel.mutateAsync();
+      await utils.billing.summary.invalidate();
+      router.refresh();
+      setStatus({ kind: "ok", message: "Scheduled subscription canceled — you're back on the trial." });
+    } catch (err) {
+      setStatus({ kind: "err", message: err instanceof Error ? err.message : "Could not cancel." });
+    }
+  }
+
+  if (!summary.data) {
+    return (
+      <SettingsCard title="Subscription" description="Loading your subscription…">
+        <div className="h-10 animate-pulse rounded bg-slate-100" />
+      </SettingsCard>
+    );
+  }
+
+  const v = summary.data;
+  const card = v.paymentMethod ? `${v.paymentMethod.brand} •••• ${v.paymentMethod.last4}` : null;
+  const firstCharge = v.firstChargeDate ? formatChargeDate(v.firstChargeDate) : null;
 
   const badge =
-    s === "ACTIVE" ? (
+    v.effectiveStatus === "active" ? (
       <Badge tone="success">Active</Badge>
-    ) : s === "TRIALING" ? (
-      <Badge tone="info">Trial</Badge>
-    ) : s === "PAST_DUE" ? (
+    ) : v.effectiveStatus === "scheduled" ? (
+      <Badge tone="success">Subscribed</Badge>
+    ) : v.effectiveStatus === "trialing" ? (
+      <Badge tone="info">Free trial</Badge>
+    ) : v.effectiveStatus === "past_due" ? (
       <Badge tone="danger">Past due</Badge>
     ) : (
       <Badge tone="neutral">Canceled</Badge>
     );
 
+  const subscribing = createCheckout.isPending;
+
   return (
     <SettingsCard
       title="Subscription"
       badge={badge}
+      description={`Landland Pro — ${planPriceLabel()}.`}
       footer={
-        s !== "ACTIVE" ? (
+        v.effectiveStatus === "trialing" || v.effectiveStatus === "past_due" || v.effectiveStatus === "canceled" ? (
           <>
             <StatusLine status={status} />
-            <Button onClick={onActivate} disabled={activate.isPending}>
-              {activate.isPending ? "Activating…" : "Activate subscription"}
+            <Button onClick={onSubscribe} disabled={subscribing}>
+              {subscribing ? "Redirecting…" : "Subscribe — add a payment method"}
+            </Button>
+          </>
+        ) : v.effectiveStatus === "scheduled" ? (
+          <>
+            <StatusLine status={status} />
+            <Button variant="secondary" onClick={onCancel} disabled={cancel.isPending}>
+              {cancel.isPending ? "Canceling…" : "Cancel subscription"}
             </Button>
           </>
         ) : (
@@ -130,72 +160,33 @@ export function SubscriptionSection({ account }: { account: SettingsAccount }) {
         )
       }
     >
-      {s === "TRIALING" && trialEndsAt ? (
+      {v.effectiveStatus === "trialing" ? (
         <p className="text-sm text-slate-700">
-          You&apos;re on a free trial — <strong>{trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} left</strong>.
-          It ends on <strong>{formatDate(trialEndsAt)}</strong>. Activate now to keep access without interruption.
+          You&apos;re on a free trial — <strong>{v.daysLeft} day{v.daysLeft === 1 ? "" : "s"} left</strong>
+          {v.trialEndsAt ? <> (ends {formatChargeDate(v.trialEndsAt)})</> : null}. Subscribe now to unlock
+          everything — you keep full access during the trial and{" "}
+          <strong>your first payment of {planPriceLabel().split(" / ")[0]} is on {firstCharge}</strong>, the day
+          your trial ends.
         </p>
-      ) : s === "ACTIVE" ? (
-        <p className="text-sm text-slate-700">Your subscription is active. Thanks for using Landland!</p>
-      ) : s === "PAST_DUE" ? (
-        <p className="text-sm text-red-700">Your last payment failed. Reactivate to restore full access.</p>
+      ) : v.effectiveStatus === "scheduled" ? (
+        <p className="text-sm text-slate-700">
+          You&apos;re subscribed to Landland Pro 🎉 Full access is unlocked now. Your first payment of{" "}
+          <strong>{planPriceLabel().split(" / ")[0]}</strong> will be taken on <strong>{firstCharge}</strong>
+          {card ? <> using {card}</> : null}. You won&apos;t be charged before then.
+        </p>
+      ) : v.effectiveStatus === "active" ? (
+        <p className="text-sm text-slate-700">
+          Your subscription is active — {planPriceLabel()}{card ? <>, billed to {card}</> : null}. Thanks for using
+          Landland!
+        </p>
+      ) : v.effectiveStatus === "past_due" ? (
+        <p className="text-sm text-red-700">Your last payment failed. Re-subscribe to restore full access.</p>
       ) : (
-        <p className="text-sm text-slate-700">Your subscription is canceled. Reactivate any time.</p>
+        <p className="text-sm text-slate-700">Your subscription is canceled. Subscribe again any time.</p>
       )}
     </SettingsCard>
   );
 }
 
-// --- Marketing & notification preferences -----------------------------------
-
-export function PreferencesSection({ account }: { account: SettingsAccount }) {
-  const router = useRouter();
-  const [marketing, setMarketing] = useState(account.marketingEmails);
-  const [notifications, setNotifications] = useState(account.notificationEmails);
-  const [status, setStatus] = useState<{ kind: "ok" | "err"; message: string } | null>(null);
-  const update = trpc.settings.update.useMutation();
-
-  async function persist(next: { marketingEmails?: boolean; notificationEmails?: boolean }) {
-    setStatus(null);
-    try {
-      await update.mutateAsync(next);
-      setStatus({ kind: "ok", message: "Preferences saved." });
-      router.refresh();
-    } catch (err) {
-      setStatus({ kind: "err", message: err instanceof Error ? err.message : "Could not save." });
-    }
-  }
-
-  return (
-    <SettingsCard
-      title="Notifications & marketing"
-      description="Choose what Landland emails you about."
-      footer={<StatusLine status={status} />}
-    >
-      <Switch
-        label="Product & marketing emails"
-        description="Tips, new features and occasional offers."
-        checked={marketing}
-        disabled={update.isPending}
-        onChange={(v) => {
-          setMarketing(v);
-          persist({ marketingEmails: v });
-        }}
-      />
-      <div className="h-px bg-slate-100" />
-      <div>
-        <p className="mb-2 text-sm font-semibold text-slate-800">Manage notification preferences</p>
-        <Switch
-          label="Account & deadline notifications"
-          description="Rent arrears, certificate expiries and MTD deadlines."
-          checked={notifications}
-          disabled={update.isPending}
-          onChange={(v) => {
-            setNotifications(v);
-            persist({ notificationEmails: v });
-          }}
-        />
-      </div>
-    </SettingsCard>
-  );
-}
+// Marketing & notification preferences now live in their own richer component:
+// see NotificationPreferencesSection.tsx (channel × category matrix).

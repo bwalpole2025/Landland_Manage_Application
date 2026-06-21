@@ -20,6 +20,7 @@ import {
 import { getPropertiesSummary, getPropertyFigures, recentTaxYears } from "@/lib/properties";
 import { loanToValuePercent } from "@/lib/finance";
 import { taxYearFor, todayISO } from "@/lib/dates";
+import { subscriptionView } from "@/lib/subscription";
 import { now } from "@/lib/clock";
 import { addressOneLine, PROPERTY_TYPE_LABELS, INSURANCE_TYPE_LABELS } from "@/lib/labels";
 
@@ -84,7 +85,7 @@ export default async function PropertiesPage() {
 
   const portfolios = getPortfolios().map((p) => ({ id: p.id, name: p.name }));
   const summary = getPropertiesSummary();
-  const gated = session.account.subscription.status === "TRIALING";
+  const gated = !subscriptionView(session.account.subscription, now()).entitled;
 
   return (
     <>

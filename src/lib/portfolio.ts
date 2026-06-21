@@ -8,7 +8,7 @@ import {
 } from "@/services/repository";
 import type { Pence, Property, Transaction } from "./types";
 import { taxYearBounds } from "./dates";
-import { sumPence } from "./money";
+import { directionTotals, type DirectionTotals } from "./reports/totals";
 
 export interface PortfolioSummary {
   propertyCount: number;
@@ -37,17 +37,10 @@ export function getPortfolioSummary(): PortfolioSummary {
   };
 }
 
-export interface Totals {
-  incomePence: Pence;
-  expensesPence: Pence;
-  netPence: Pence;
-}
+export type Totals = DirectionTotals;
 
-function totalsFor(rows: Transaction[]): Totals {
-  const incomePence = sumPence(rows.filter((t) => t.direction === "income").map((t) => t.amountPence));
-  const expensesPence = sumPence(rows.filter((t) => t.direction === "expense").map((t) => t.amountPence));
-  return { incomePence, expensesPence, netPence: incomePence - expensesPence };
-}
+// Shared canonical calculation — keeps the dashboard P&L and the reports in lock-step.
+const totalsFor = (rows: Transaction[]): Totals => directionTotals(rows);
 
 export function getYtdTotals(taxYear: string): Totals {
   const { start, end } = taxYearBounds(taxYear);

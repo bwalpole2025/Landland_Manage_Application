@@ -55,6 +55,17 @@ model Account {
   // Subscription / trial state.
   subscriptionStatus SubscriptionStatus @default(TRIALING)
   trialEndsAt        DateTime?
+  // Set when the owner subscribes during the trial: billing is scheduled to
+  // start here (the end of the trial). Drives premium entitlement.
+  billingStartsAt    DateTime?
+  // Display-only payment-method summary from the provider (never raw card data).
+  paymentMethodBrand String?
+  paymentMethodLast4 String?
+  // Provider references (e.g. Stripe customer / subscription ids).
+  billingCustomerId     String?
+  billingSubscriptionId String?
+  // Explicit, non-auto terms acceptance captured at checkout.
+  termsAcceptedAt    DateTime?
 
   // Tax & locale.
   firstTaxYear String? // e.g. "2024/25" — first year this account reports for
@@ -88,6 +99,10 @@ model Account {
   bankAccounts     BankAccount[]
   obligations      MtdObligation[]
   submissions      MtdSubmission[]
+  notifications    Notification[]
+  notificationPreference NotificationPreference?
+  pushDevices      PushDevice[]
+  auditLogs        AuditLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -122,6 +137,8 @@ model User {
   phoneTokens        PhoneVerificationToken[]
   beneficialOwners   BeneficialOwner[]
   sentInvitations    Invitation[]             @relation("InvitationInvitedBy")
+  notifications      Notification[]
+  pushDevices        PushDevice[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -755,6 +772,8 @@ model BankAccount {
   maskedNumber String
   status       BankConnectionStatus @default(CONNECTED)
   lastSyncedAt DateTime?
+  // Open Banking consent expiry — drives re-authorisation warnings.
+  consentExpiresAt DateTime?
 
   account      Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
   transactions Transaction[]
@@ -810,4 +829,129 @@ model MtdSubmission {
   createdAt DateTime @default(now())
 
   @@index([accountId])
+}
+
+// ===========================================================================
+// Notifications
+// ===========================================================================
+
+enum NotificationChannel {
+  EMAIL
+  IN_APP
+  PUSH
+}
+
+enum NotificationCategory {
+  DOCUMENT_EXPIRY
+  ARREARS
+  RENT_REMINDER
+  BANK_FEED
+  MTD_DEADLINE
+}
+
+/// A single delivered notification. Doubles as the in-app inbox (rows where
+/// channel = IN_APP) and as the cross-channel idempotency ledger: the unique
+/// (accountId, dedupeKey, channel) guarantees a given reminder is delivered at
+/// most once per channel, however many times a scan runs.
+model Notification {
+  id        String               @id @default(cuid())
+  accountId String
+  userId    String? // recipient inbox (in-app); null = account-wide
+  category  NotificationCategory
+  channel   NotificationChannel
+  // Stable identity of this occurrence, e.g. "doc:<id>:expiry:7".
+  dedupeKey String
+  title     String
+  body      String
+  href      String?
+  // Set when the recipient reads it (in-app only).
+  readAt    DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([accountId, dedupeKey, channel])
+  @@index([accountId, channel, readAt])
+  @@index([userId])
+}
+
+/// Per-account notification preferences. A category is delivered on a channel
+/// only when both are enabled (see lib/notifications/preferences.ts).
+model NotificationPreference {
+  id        String @id @default(cuid())
+  accountId String @unique
+
+  // Channels.
+  emailEnabled Boolean @default(true)
+  inAppEnabled Boolean @default(true)
+  pushEnabled  Boolean @default(false)
+
+  // Categories.
+  documentExpiry Boolean @default(true)
+  arrears        Boolean @default(true)
+  rentReminders  Boolean @default(true)
+  bankFeed       Boolean @default(true)
+  mtdDeadlines   Boolean @default(true)
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ===========================================================================
+// Audit trail
+// ===========================================================================
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  SUBMIT
+  EXPORT
+  LOGIN
+}
+
+/// An immutable record of a significant action — financial changes, external
+/// submissions (HMRC), data exports/deletions. Append-only: never updated.
+model AuditLog {
+  id          String      @id @default(cuid())
+  accountId   String
+  actorUserId String? // null for system/background actions
+  action      AuditAction
+  /// Entity type, e.g. "transaction", "mtd_submission", "account".
+  entity      String
+  entityId    String?
+  /// Human-readable one-line summary for the audit UI.
+  summary     String
+  /// Structured before/after or context (JSON string).
+  metadata    String?
+  ipAddress   String?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([entity, entityId])
+}
+
+/// A registered mobile/web device for push notifications.
+model PushDevice {
+  id        String @id @default(cuid())
+  accountId String
+  userId    String
+  token     String @unique
+  platform  String @default("web") // web | ios | android
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime?
+
+  @@index([accountId])
+  @@index([userId])
 }

@@ -7,6 +7,7 @@
 // Disabling requires a valid current code as a safety check.
 
 import { prisma } from "@/server/db";
+import { encryptSecret, decryptSecret } from "@/server/security/encryption";
 import { generateTotpSecret, totpKeyUri, verifyTotp } from "./totp";
 
 export class TwoFactorError extends Error {
@@ -28,7 +29,8 @@ export async function beginTotpEnrolment(userId: string): Promise<TotpEnrolment>
   if (user.twoFactorEnabled) throw new TwoFactorError("Two-factor is already enabled.");
 
   const secret = generateTotpSecret();
-  await prisma.user.update({ where: { id: userId }, data: { totpSecret: secret } });
+  // Encrypted at rest; the plaintext is only returned now for the QR code.
+  await prisma.user.update({ where: { id: userId }, data: { totpSecret: encryptSecret(secret) } });
   return { secret, otpauthUrl: totpKeyUri(user.email, secret) };
 }
 
@@ -37,7 +39,7 @@ export async function confirmTotpEnrolment(userId: string, code: string): Promis
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new TwoFactorError("User not found.");
   if (!user.totpSecret) throw new TwoFactorError("Start two-factor setup first.");
-  if (!verifyTotp(code.trim(), user.totpSecret)) {
+  if (!verifyTotp(code.trim(), decryptSecret(user.totpSecret))) {
     throw new TwoFactorError("That code is not valid. Try again.");
   }
   await prisma.user.update({ where: { id: userId }, data: { twoFactorEnabled: true } });
@@ -48,7 +50,7 @@ export async function disableTwoFactor(userId: string, code: string): Promise<vo
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new TwoFactorError("User not found.");
   if (!user.twoFactorEnabled || !user.totpSecret) return; // already off
-  if (!verifyTotp(code.trim(), user.totpSecret)) {
+  if (!verifyTotp(code.trim(), decryptSecret(user.totpSecret))) {
     throw new TwoFactorError("That code is not valid.");
   }
   await prisma.user.update({

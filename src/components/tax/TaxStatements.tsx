@@ -86,6 +86,13 @@ function AcknowledgementGate({ disclaimer, onAccept }: { disclaimer: string; onA
 
 const gbp = (p: number) => formatGBP(p, { showPence: false });
 
+const BAND_LABEL: Record<string, string> = {
+  none: "within personal allowance",
+  basic: "basic rate",
+  higher: "higher rate",
+  additional: "additional rate",
+};
+
 function StatementsArea({ currentTaxYear, statements, owners, disclaimer }: { currentTaxYear: string; statements: YearStatement[]; owners: { id: string; name: string }[]; disclaimer: string }) {
   const [createdYears, setCreatedYears] = useState<string[]>([currentTaxYear]);
   const [selectedYear, setSelectedYear] = useState(currentTaxYear);
@@ -149,8 +156,34 @@ function StatementsArea({ currentTaxYear, statements, owners, disclaimer }: { cu
             <StatTile label="Estimated tax" value={gbp(estimate.estimatedTaxPence)} sub="estimate · not advice" tone="warning" />
           </div>
 
+          {/* SA105-structured taxable rental income */}
           <Card>
-            <CardHeader title="SA105 breakdown" subtitle="Your categorised transactions aggregated into the SA105 box numbers" />
+            <CardHeader title="Taxable rental income (SA105)" subtitle="Allowable income less allowable expenses" />
+            <div className="p-5 text-sm">
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Income</p>
+              <Line label="Rents received (box 20)" value={gbp(estimate.income.rentsReceivedPence)} />
+              <Line label="Lease premiums (box 22)" value={gbp(estimate.income.premiumsPence)} />
+              <Line label="Other property income (box 20)" value={gbp(estimate.income.otherIncomePence)} />
+              <Line label="Total income" value={gbp(estimate.totalIncomePence)} strong />
+
+              <p className="mb-1.5 mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Allowable expenses</p>
+              {estimate.allowableExpenses.length === 0 ? <p className="text-slate-400">No allowable expenses recorded.</p> : null}
+              {estimate.allowableExpenses.map((e) => <Line key={e.category} label={`${e.label} (box ${e.sa105Box})`} value={`(${gbp(e.amountPence)})`} />)}
+
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <Line label="Taxable rental profit" value={gbp(estimate.taxableProfitPence)} strong />
+                <Line label="Residential finance costs (box 44 — relieved, not deducted)" value={gbp(estimate.financeCostsPence)} muted />
+                <Line label="Finance-cost tax reducer (basic rate)" value={`− ${gbp(estimate.financeReliefPence)}`} />
+                <div className="mt-2 flex items-center justify-between rounded-lg bg-amber-50 px-3 py-2">
+                  <span className="font-medium text-amber-900">Estimated tax · {selectedYear} · {BAND_LABEL[estimate.taxBand]}</span>
+                  <span className="font-bold text-amber-900">{gbp(estimate.estimatedTaxPence)}</span>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader title="SA105 box breakdown" subtitle="Your categorised transactions aggregated into the SA105 box numbers" />
             {estimate.boxes.length === 0 ? (
               <p className="px-5 py-8 text-center text-sm text-slate-500">No categorised transactions for {selectedYear}{ownerId ? " for this owner" : ""} yet.</p>
             ) : (
@@ -176,8 +209,9 @@ function StatementsArea({ currentTaxYear, statements, owners, disclaimer }: { cu
           <Card>
             <CardHeader title="How this estimate works" />
             <div className="space-y-2 p-5 text-sm text-slate-600">
-              <p>Profit is income (box 20) less allowable expenses (boxes 24–29). Residential <strong>finance costs</strong> such as mortgage interest (box 44, {gbp(estimate.financeCostsPence)}) are not deducted from profit — instead they attract a <strong>basic-rate (20%) tax reduction</strong>.</p>
-              <p className="flex items-center gap-1.5 text-slate-500"><LockIcon width={14} height={14} /> A simplified, single-source estimate — it doesn&apos;t account for your other income, allowances or reliefs. Always confirm with a qualified accountant.</p>
+              <p>Profit is income (box 20) less allowable expenses (boxes 24–29). Residential <strong>finance costs</strong> such as mortgage interest (box 44, {gbp(estimate.financeCostsPence)}) are not deducted from profit — instead they attract a <strong>basic-rate tax reducer</strong> of {gbp(estimate.financeReliefPence)}.</p>
+              <p>Rates &amp; allowances applied from the <strong>{estimate.appliedTaxYear}</strong> ruleset; tax is banded (basic / higher / additional) after the personal allowance.</p>
+              <p className="flex items-center gap-1.5 text-slate-500"><LockIcon width={14} height={14} /> A simplified forecast — it doesn&apos;t account for your other income, allowances or reliefs. Always confirm with a qualified accountant.</p>
             </div>
           </Card>
         </>
@@ -200,6 +234,15 @@ function StatementsArea({ currentTaxYear, statements, owners, disclaimer }: { cu
         )}
       </Modal>
     </>
+  );
+}
+
+function Line({ label, value, strong, muted }: { label: string; value: string; strong?: boolean; muted?: boolean }) {
+  return (
+    <div className={`flex items-center justify-between py-1 ${strong ? "border-t border-slate-100 pt-2 font-semibold text-slate-900" : muted ? "text-slate-400" : "text-slate-600"}`}>
+      <span>{label}</span>
+      <span className="tabular-nums">{value}</span>
+    </div>
   );
 }
 

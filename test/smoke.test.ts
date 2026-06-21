@@ -10,10 +10,11 @@ import { rentDueDateOf, computeArrears } from "@/lib/arrears";
 import { getTransactions, getActiveTenancyForProperty, getProperties, getTenancies } from "@/services/repository";
 import { filterTransactions, hasActiveFilters } from "@/lib/transactions-filter";
 import { estimateTax } from "@/lib/tax";
+import { getTaxConfig, TAX_YEAR_CONFIGS } from "@/lib/tax-config";
 import { suggestCategorisation, type SuggestContext } from "@/lib/categorisation";
 import type { Transaction } from "@/lib/types";
 import { getPropertiesSummary, getPropertyFigures, getPropertyPnl12m, recentTaxYears } from "@/lib/properties";
-import { getOwnerSplit, getBeneficialOwners, getPortfolioOwnership, ownerShareOfProperty } from "@/lib/ownership";
+import { getOwnerSplit, getBeneficialOwners, getPortfolioOwnership, ownerShareOfProperty, estimateTaxForOwner } from "@/lib/ownership";
 import { generateRentSchedule, nextRentDueDate } from "@/lib/tenancies";
 import { createTenancy, removeTenancy, createDocument, removeDocument, getComplianceDocuments } from "@/services/repository";
 import { reminderSchedule, withinExpiryWindow, categoryIdForDoc } from "@/lib/documents";
@@ -26,12 +27,46 @@ import {
 } from "@/services/repository";
 import { loanToValuePercent } from "@/lib/finance";
 import { MockBankFeedProvider } from "@/server/providers/bank-feed";
+import { MockHmrcMtdProvider, HmrcApiError, REQUIRED_FRAUD_HEADERS } from "@/server/providers/hmrc-mtd";
+import { buildFraudPreventionHeaders, missingFraudHeaders } from "@/server/mtd/fraud-headers";
+import { getAllProperties, getCompanies, getUsers, getDirectorLoanMovements } from "@/services/repository";
+import { buildReport, REPORT_DEFS, type ReportDataset, type ReportFilters } from "@/lib/reports/build";
+import { reportToCsv } from "@/lib/reports/csv";
+import { reportToPdf } from "@/lib/reports/pdf";
+import { directionTotals, operatingPnl } from "@/lib/reports/totals";
+import { getYtdTotals } from "@/lib/portfolio";
+import { taxYearBounds } from "@/lib/dates";
 import { normalizeBankTransaction, mergeDeduped, dedupeKey } from "@/lib/ingest";
 import { parseCsv, autoMap, validateImport, SAMPLE_CSV, resetImportSeq } from "@/lib/import/csv";
 import { acceptInvitation } from "@/server/auth/invitations";
 import { hashToken } from "@/server/auth/tokens";
 import { appRouter } from "@/server/routers/_app";
 import { prisma } from "@/server/db";
+import {
+  DEFAULT_PREFERENCES,
+  deliveryKey,
+  planDeliveries,
+  isoDaysUntil,
+  documentExpiryEvents,
+  arrearsEvents,
+  rentReminderEvents,
+  bankFeedEvents,
+  mtdDeadlineEvents,
+  collectNotificationEvents,
+} from "@/lib/notifications";
+import { runNotificationScan, savePreferences } from "@/server/notifications";
+import { encryptSecret, decryptSecret, isEncrypted } from "@/server/security/encryption";
+import { recordAudit, listAudit } from "@/server/security/audit";
+import { exportAccountData, deleteAccount } from "@/server/security/gdpr";
+import {
+  subscriptionView,
+  projectedFirstCharge,
+  formatChargeDate,
+  trialEndFrom,
+  planPriceLabel,
+} from "@/lib/subscription";
+import { completeCheckout, viewForAccount } from "@/server/billing/service";
+import { MockPaymentProvider } from "@/server/providers/payments";
 import type { AppSession } from "@/server/auth/session";
 import {
   getArrearsList,
@@ -59,7 +94,7 @@ async function ownerSession(userId: string): Promise<AppSession> {
       name: "Test",
       type: "individual",
       mtd: { enrolled: false },
-      subscription: { status: "TRIALING", trialEndsAt: null },
+      subscription: { status: "TRIALING", trialEndsAt: null, billingStartsAt: null },
     },
     role: "owner",
     isDelegated: false,
@@ -537,6 +572,69 @@ describe("tenancies: schedule + creation", () => {
   });
 });
 
+describe("SA105 tax estimation engine", () => {
+  function mkTx(over: Partial<Transaction>): Transaction {
+    return { id: "t", accountId: "a", date: "2026-05-01", direction: "expense", amountPence: 0, description: "x", source: "manual", reconcile: "reconciled", ...over } as Transaction;
+  }
+
+  it("rates/allowances come from a versioned, per-tax-year config table", () => {
+    const c = getTaxConfig("2026/27");
+    expect(c.personalAllowancePence).toBe(1_257_000);
+    expect(c.basicRate).toBe(0.2);
+    expect(c.financeCostReliefRate).toBe(0.2);
+    expect(c.version).toContain("2026/27");
+    expect(Object.keys(TAX_YEAR_CONFIGS).length).toBeGreaterThan(2);
+    // A future/unknown year falls back to a configured ruleset rather than crashing.
+    expect(getTaxConfig("2099/00").personalAllowancePence).toBe(1_257_000);
+  });
+
+  it("outputs taxable income, allowable expenses and an estimate for seeded data", () => {
+    const est = estimateTax(getTransactions(), "2026/27");
+    expect(est.income.rentsReceivedPence).toBeGreaterThan(0); // SA105 income structure
+    expect(est.allowableExpenses.length).toBeGreaterThan(0); // expenses by category
+    expect(est.allowableExpenses.every((e) => e.sa105Box && e.amountPence > 0)).toBe(true);
+    expect(est.taxableProfitPence).toBeGreaterThan(0);
+    expect(typeof est.estimatedTaxPence).toBe("number");
+    expect(est.appliedTaxYear).toBe("2026/27");
+  });
+
+  it("finance costs are a basic-rate reducer, not a deduction", () => {
+    const txs = [
+      mkTx({ id: "i", direction: "income", category: "rent", amountPence: poundsToPence(60000), description: "rent" }),
+      mkTx({ id: "f", direction: "expense", category: "finance_costs", amountPence: poundsToPence(20000), description: "mortgage interest" }),
+    ];
+    const est = estimateTax(txs, "2026/27");
+    expect(est.taxableProfitPence).toBe(poundsToPence(60000)); // finance NOT deducted from profit
+    expect(est.financeCostsPence).toBe(poundsToPence(20000));
+    expect(est.financeReliefPence).toBe(poundsToPence(4000)); // 20% reducer
+    expect(est.taxBand).toBe("higher"); // banded tax forecast
+    // A real deduction would give £40k profit; the reducer keeps it at £60k.
+  });
+
+  it("changing a category changes the result", () => {
+    const base = [
+      mkTx({ id: "i", direction: "income", category: "rent", amountPence: poundsToPence(30000), description: "rent" }),
+      mkTx({ id: "e", direction: "expense", category: "repairs_maintenance", amountPence: poundsToPence(5000), description: "repairs" }),
+    ];
+    const before = estimateTax(base, "2026/27");
+    // Re-categorise the repair as a capital expense (excluded from SA105).
+    const after = estimateTax(base.map((t) => (t.id === "e" ? { ...t, category: "capital_expense" as const } : t)), "2026/27");
+    expect(after.taxableProfitPence).toBeGreaterThan(before.taxableProfitPence);
+    expect(after.estimatedTaxPence).not.toBe(before.estimatedTaxPence);
+  });
+
+  it("per-owner income & expense splits sum to the account total", () => {
+    const total = estimateTax(getTransactions(), "2026/27");
+    const owners = getBeneficialOwners();
+    const sum = (pick: (e: ReturnType<typeof estimateTaxForOwner>) => number) =>
+      owners.reduce((s, o) => s + pick(estimateTaxForOwner(o.id, "2026/27")), 0);
+    // Every property's ownership sums to 100%, so the apportioned parts re-sum to the whole.
+    expect(sum((e) => e.totalIncomePence)).toBe(total.totalIncomePence);
+    expect(sum((e) => e.totalExpensesPence)).toBe(total.totalExpensesPence);
+    expect(sum((e) => e.taxableProfitPence)).toBe(total.taxableProfitPence);
+  });
+});
+
 describe("ownership & pro-rata tax", () => {
   it("beneficial owners and portfolio ownership are derived from holdings", () => {
     const owners = getBeneficialOwners();
@@ -567,6 +665,231 @@ describe("ownership & pro-rata tax", () => {
     const sarah = getOwnerSplit("u_sarah", "2026/27");
     // Station expenses: letting fees £384 + mortgage interest £1,280 = £1,664; Sarah's 50% = £832.
     expect(sarah.expensesPence).toBe(poundsToPence((384 + 1280) / 2));
+  });
+});
+
+describe("reports", () => {
+  const taxYear = "2026/27";
+  const { start, end } = taxYearBounds(taxYear);
+  const dataset: ReportDataset = {
+    transactions: getTransactions(),
+    properties: getAllProperties(),
+    portfolios: getPortfolios(),
+    companies: getCompanies(),
+    tenancies: getTenancies(),
+    users: getUsers(),
+    directorLoans: getDirectorLoanMovements(),
+    taxYear,
+    today: "2026-06-20",
+    timeZone: "Europe/London",
+    generatedAt: "2026-06-20T12:00:00.000Z",
+  };
+  const allF: ReportFilters = { from: start, to: end, portfolioId: "" };
+
+  it("every catalogued report builds for the seeded data", () => {
+    expect(REPORT_DEFS).toHaveLength(11);
+    for (const def of REPORT_DEFS) {
+      const m = buildReport(dataset, def.id, allF);
+      expect(m.title).toBe(def.name);
+      expect(m.sections.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("general ledger lists income & expenses with totals", () => {
+    const s = buildReport(dataset, "general-ledger", allF).sections[0];
+    expect(s.rows.length).toBeGreaterThan(0);
+    expect(Number(s.totals!.income)).toBeGreaterThan(0);
+    expect(Number(s.totals!.expense)).toBeGreaterThan(0);
+  });
+
+  it("respects the portfolio filter", () => {
+    const all = buildReport(dataset, "general-ledger", allF).sections[0].rows.length;
+    const biz = buildReport(dataset, "general-ledger", { ...allF, portfolioId: "pf_business" }).sections[0].rows.length;
+    expect(biz).toBeGreaterThan(0);
+    expect(biz).toBeLessThan(all);
+  });
+
+  it("respects the date filter", () => {
+    const wide = buildReport(dataset, "general-ledger", allF).sections[0].rows.length;
+    const narrow = buildReport(dataset, "general-ledger", { ...allF, from: "2026-06-01", to: "2026-06-30" }).sections[0].rows.length;
+    expect(narrow).toBeLessThan(wide);
+    expect(narrow).toBeGreaterThan(0);
+  });
+
+  it("directors' loans group by company and director with a net balance", () => {
+    const m = buildReport(dataset, "directors-loans", allF);
+    const sec = m.sections[0];
+    expect(sec.title).toContain("Walpole Lettings");
+    expect(sec.rows.some((r) => r.director === "Benjamin Walpole")).toBe(true);
+    expect(sec.totals).toBeDefined();
+  });
+
+  it("rent roll lists all tenancies (portfolio filter, no date)", () => {
+    const m = buildReport(dataset, "rent-roll", allF);
+    expect(m.sections[0].rows.length).toBe(getTenancies().length);
+  });
+
+  it("income statement excludes finance costs and capital from operating expenses", () => {
+    const m = buildReport(dataset, "income-statement", allF);
+    const opEx = m.sections.find((s) => s.title === "Operating expenses")!;
+    expect(opEx.rows.some((r) => /finance|mortgage interest/i.test(String(r.category)))).toBe(false);
+  });
+
+  it("exports valid CSV", () => {
+    const csv = reportToCsv(buildReport(dataset, "general-ledger", allF));
+    expect(csv).toContain("General Ledger");
+    expect(csv).toContain("Income");
+    expect(csv.split("\r\n").length).toBeGreaterThan(3);
+  });
+
+  it("exports a structurally valid PDF for every report", () => {
+    for (const def of REPORT_DEFS) {
+      const bytes = reportToPdf(buildReport(dataset, def.id, allF));
+      expect(bytes).toBeInstanceOf(Uint8Array);
+      expect(String.fromCharCode(...bytes.slice(0, 8))).toBe("%PDF-1.4");
+      expect(String.fromCharCode(...bytes.slice(-5))).toBe("%%EOF");
+    }
+  });
+
+  // --- Reconciliation (the acceptance) ---
+  const moneyRow = (m: ReturnType<typeof buildReport>, section: number, key: string, totalsKey = key) =>
+    Number(m.sections[section].totals![totalsKey]);
+
+  it("Annual Report P&L totals reconcile with the dashboard P&L (same period)", () => {
+    const m = buildReport(dataset, "annual", allF);
+    const dash = getYtdTotals(taxYear); // dashboard P&L, shared directionTotals
+    expect(Number(m.sections[0].rows[0].amount)).toBe(dash.incomePence); // Total income
+    expect(Number(m.sections[0].rows[1].amount)).toBe(dash.expensesPence); // Total expenses
+    expect(Number(m.sections[0].rows[2].amount)).toBe(dash.netPence); // Net profit
+  });
+
+  it("Income Statement reconciles with the shared operating P&L", () => {
+    const m = buildReport(dataset, "income-statement", allF);
+    const op = operatingPnl(getTransactions().filter((t) => t.date >= start && t.date <= end));
+    expect(moneyRow(m, 0, "amount")).toBe(op.incomePence);
+    expect(moneyRow(m, 1, "amount")).toBe(op.expensesPence);
+    expect(Number(m.sections[2].rows[0].amount)).toBe(op.netPence);
+  });
+
+  it("Hammock Tax Statement mirrors the Tax module output exactly", () => {
+    const m = buildReport(dataset, "hammock-tax", allF);
+    const est = estimateTax(getTransactions(), taxYear); // the Tax module
+    expect(Number(m.sections[0].totals!.amount)).toBe(est.totalIncomePence);
+    expect(Number(m.sections[2].rows[0].amount)).toBe(est.taxableProfitPence);
+    expect(Number(m.sections[2].rows[3].amount)).toBe(est.estimatedTaxPence);
+  });
+
+  it("owner-filtered Tax Statement reconciles with the per-owner Tax module figure", () => {
+    const owner = getBeneficialOwners()[0];
+    const m = buildReport(dataset, "hammock-tax", { ...allF, ownerId: owner.id });
+    const est = estimateTaxForOwner(owner.id, taxYear);
+    expect(Number(m.sections[0].totals!.amount)).toBe(est.totalIncomePence);
+    expect(Number(m.sections[2].rows[0].amount)).toBe(est.taxableProfitPence);
+  });
+
+  it("directionTotals exclude deactivated transactions (consistency)", () => {
+    const rows = getTransactions().filter((t) => t.date >= start && t.date <= end);
+    const withDeactivated = rows.filter((t) => t.deactivated);
+    expect(withDeactivated.length).toBeGreaterThan(0); // there is a deactivated dupe in seed
+    const t = directionTotals(rows);
+    const naive = rows.filter((r) => r.direction === "income").reduce((s, r) => s + r.amountPence, 0);
+    expect(t.incomePence).toBeLessThan(naive); // deactivated income excluded
+  });
+
+  it("property filter narrows to a single property", () => {
+    const m = buildReport(dataset, "general-ledger", { ...allF, propertyId: "p_oak" });
+    const props = new Set(m.sections[0].rows.map((r) => r.property));
+    expect([...props].every((p) => p === "Oakfield Road")).toBe(true);
+  });
+
+  it("every report carries a Generated meta in the account time zone", () => {
+    const m = buildReport(dataset, "general-ledger", allF);
+    const gen = m.meta.find((x) => x.label === "Generated");
+    expect(gen).toBeDefined();
+    expect(gen!.value).toMatch(/GMT|BST|UTC/); // tz-aware
+  });
+});
+
+describe("HMRC MTD sandbox flow", () => {
+  const p = new MockHmrcMtdProvider();
+  const REDIRECT = "http://localhost:3000/api/mtd/callback";
+  const headers = buildFraudPreventionHeaders({ userId: "acc_demo" });
+  const ctx = (over: Partial<Parameters<typeof p.getObligations>[0]> = {}) => ({
+    accountId: "acc_demo",
+    accessToken: "at_seed",
+    fraudHeaders: headers,
+    ...over,
+  });
+
+  it("authorises via OAuth — no Government Gateway password anywhere", async () => {
+    const url = p.getAuthorizationUrl({ accountId: "acc_demo", redirectUri: REDIRECT, state: "xyz" });
+    expect(url).toMatch(/oauth\/authorize/);
+    expect(url).toContain("state=xyz");
+    expect(url).toContain("response_type=code");
+    expect(url).not.toMatch(/password/i);
+    const tokens = await p.exchangeCodeForTokens("auth-code-123", REDIRECT);
+    expect(tokens.accessToken).toMatch(/^at_/);
+    expect(tokens.refreshToken).toMatch(/^rt_/);
+    expect(tokens.tokenType).toBe("bearer");
+    expect(Date.parse(tokens.expiresAt)).toBeGreaterThan(Date.parse("2026-06-20T12:00:00Z"));
+  });
+
+  it("refreshes tokens and rejects a bad refresh token", async () => {
+    const t = await p.refreshTokens("rt_abc");
+    expect(t.accessToken).toMatch(/^at_/);
+    await expect(p.refreshTokens("not-a-token")).rejects.toBeInstanceOf(HmrcApiError);
+  });
+
+  it("requires a bearer token and fraud-prevention headers", async () => {
+    await expect(p.getObligations(ctx({ accessToken: "" }), "2026/27")).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      p.submitPeriodUpdate(ctx({ fraudHeaders: {} }), {
+        obligationId: "ob_2627_q1", taxYear: "2026/27", period: "Q1", fromDate: "2026-04-06", toDate: "2026-07-05", totalIncomeMinor: 1000, totalExpensesMinor: 0,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(missingFraudHeaders({})).toEqual(REQUIRED_FRAUD_HEADERS);
+    expect(missingFraudHeaders(headers)).toEqual([]);
+  });
+
+  it("full flow: authorise → list obligations → submit update → calculation", async () => {
+    const tokens = await p.exchangeCodeForTokens("c", REDIRECT);
+    const c = ctx({ accessToken: tokens.accessToken });
+
+    const obligations = await p.getObligations(c, "2026/27");
+    expect(obligations).toHaveLength(4);
+    expect(obligations[0]).toMatchObject({ period: "Q1", startDate: "2026-04-06", endDate: "2026-07-05", dueDate: "2026-08-07" });
+
+    const receipt = await p.submitPeriodUpdate(c, {
+      obligationId: obligations[0].obligationId, taxYear: "2026/27", period: "Q1",
+      fromDate: obligations[0].startDate, toDate: obligations[0].endDate,
+      totalIncomeMinor: 320000, totalExpensesMinor: 50000,
+    });
+    expect(receipt.receiptRef).toMatch(/^HMRC-MTD-202627Q1-SE-/); // self, not agent
+    expect(receipt.submittedAt).toBeTruthy();
+
+    const calc = await p.getTaxCalculation(c, "2026/27", { totalIncomeMinor: 8_000_000, totalExpensesMinor: 1_000_000 });
+    expect(calc.taxableProfitMinor).toBe(7_000_000);
+    expect(calc.incomeTaxMinor).toBe(Math.round(0.2 * (7_000_000 - 1_257_000)));
+    expect(calc.totalDueMinor).toBe(calc.incomeTaxMinor + calc.class4NicMinor);
+    expect(calc.calculationId).toMatch(/^calc_202627_/);
+  });
+
+  it("supports delegated (agent) submission and the Final Declaration", async () => {
+    const c = ctx({ agent: { onBehalfOfClient: true, agentReferenceNumber: "ARN-1" } });
+    const r = await p.submitPeriodUpdate(c, {
+      obligationId: "ob_2627_q1", taxYear: "2026/27", period: "Q1", fromDate: "2026-04-06", toDate: "2026-07-05", totalIncomeMinor: 1000, totalExpensesMinor: 0,
+    });
+    expect(r.receiptRef).toContain("-AG-"); // submitted on behalf of the client
+    const fd = await p.submitFinalDeclaration(c, { taxYear: "2026/27", calculationId: "calc_x" });
+    expect(fd.receiptRef).toMatch(/^HMRC-MTD-FINAL-202627-AG-/);
+    await expect(p.submitFinalDeclaration(c, { taxYear: "2026/27", calculationId: "" })).rejects.toBeInstanceOf(HmrcApiError);
+  });
+
+  it("builds the required fraud-prevention headers without leaking credentials", () => {
+    const h = buildFraudPreventionHeaders({ userId: "acc_demo" });
+    for (const req of REQUIRED_FRAUD_HEADERS) expect(h[req]).toBeTruthy();
+    expect(h["Gov-Client-Connection-Method"]).toBe("WEB_APP_VIA_SERVER");
+    expect(JSON.stringify(h)).not.toMatch(/password/i);
   });
 });
 
@@ -642,6 +965,213 @@ describe("data ingestion: CSV import", () => {
   });
 });
 
+describe("notifications: triggers, planning & preferences", () => {
+  const TODAY = "2026-06-21";
+
+  it("isoDaysUntil counts whole days in either direction", () => {
+    expect(isoDaysUntil(TODAY, "2026-06-28")).toBe(7);
+    expect(isoDaysUntil(TODAY, "2026-06-22")).toBe(1);
+    expect(isoDaysUntil(TODAY, "2026-06-21")).toBe(0);
+    expect(isoDaysUntil(TODAY, "2026-06-14")).toBe(-7);
+  });
+
+  it("document expiry fires only on the 30/14/7/1-day thresholds", () => {
+    const doc = (expiryDate: string) => ({ id: "d1", title: "Gas Safety Certificate", propertyName: "Oakfield Road", expiryDate });
+    expect(documentExpiryEvents([doc("2026-06-28")], TODAY)).toHaveLength(1); // 7 days
+    expect(documentExpiryEvents([doc("2026-07-01")], TODAY)).toHaveLength(0); // 10 days — no threshold
+    expect(documentExpiryEvents([doc("2026-07-21")], TODAY)).toHaveLength(1); // 30 days
+    const ev = documentExpiryEvents([doc("2026-06-28")], TODAY)[0];
+    expect(ev.dedupeKey).toBe("doc:d1:expiry:7");
+    expect(ev.category).toBe("document_expiry");
+    expect(ev.title).toContain("7 days");
+  });
+
+  // The headline acceptance criterion.
+  it("a document expiring in 7 days triggers exactly one reminder per configured channel; disabling a preference suppresses it", () => {
+    const events = documentExpiryEvents(
+      [{ id: "doc_oak_gas", title: "Gas Safety Certificate", propertyName: "Oakfield Road", expiryDate: "2026-06-28" }],
+      TODAY,
+    );
+    expect(events).toHaveLength(1);
+
+    // Default prefs: email + in-app on, push off → exactly two deliveries, one per channel.
+    const planned = planDeliveries(events, DEFAULT_PREFERENCES);
+    expect(planned).toHaveLength(2);
+    expect(planned.map((p) => p.channel).sort()).toEqual(["email", "in_app"]);
+    // Exactly one per channel — no channel appears twice.
+    expect(new Set(planned.map((p) => p.channel)).size).toBe(planned.length);
+
+    // Idempotent: re-running with those deliveries already recorded sends nothing.
+    const ledger = planned.map((p) => deliveryKey(p.dedupeKey, p.channel));
+    expect(planDeliveries(events, DEFAULT_PREFERENCES, ledger)).toHaveLength(0);
+
+    // Disabling the email channel suppresses the email reminder (in-app remains).
+    const noEmail = { ...DEFAULT_PREFERENCES, channels: { ...DEFAULT_PREFERENCES.channels, email: false } };
+    expect(planDeliveries(events, noEmail).map((p) => p.channel)).toEqual(["in_app"]);
+
+    // Disabling the whole document-expiry category suppresses every channel.
+    const noCategory = {
+      ...DEFAULT_PREFERENCES,
+      categories: { ...DEFAULT_PREFERENCES.categories, document_expiry: false },
+    };
+    expect(planDeliveries(events, noCategory)).toHaveLength(0);
+
+    // Enabling push as well fans out to all three channels — still exactly one each.
+    const withPush = { ...DEFAULT_PREFERENCES, channels: { ...DEFAULT_PREFERENCES.channels, push: true } };
+    const all = planDeliveries(events, withPush);
+    expect(all.map((p) => p.channel).sort()).toEqual(["email", "in_app", "push"]);
+  });
+
+  it("planner collapses duplicate events within a single scan", () => {
+    const dup = { dedupeKey: "doc:d1:expiry:7", category: "document_expiry" as const, title: "x", body: "y", href: "/files" };
+    const planned = planDeliveries([dup, dup], DEFAULT_PREFERENCES);
+    expect(planned).toHaveLength(2); // 1 unique event × 2 channels, not 4
+  });
+
+  it("arrears raise one alert per tenancy per month", () => {
+    const rows = [{ tenancyId: "ten_station", propertyName: "Station Mews", tenantName: "Aisha Bennett", balanceMinor: 160000, monthsBehind: 1 }];
+    const events = arrearsEvents(rows, TODAY);
+    expect(events).toHaveLength(1);
+    expect(events[0].dedupeKey).toBe("arrears:ten_station:2026-06");
+    expect(events[0].category).toBe("arrears");
+    // A zero/negative balance is not in arrears.
+    expect(arrearsEvents([{ ...rows[0], balanceMinor: 0 }], TODAY)).toHaveLength(0);
+  });
+
+  it("upcoming rent reminders fire 3 and 1 day(s) before the due date", () => {
+    const row = (dueDate: string) => ({ tenancyId: "ten_oak", propertyName: "Oakfield Road", dueDate, amountMinor: 125000 });
+    expect(rentReminderEvents([row("2026-06-24")], TODAY)).toHaveLength(1); // 3 days
+    expect(rentReminderEvents([row("2026-06-22")], TODAY)).toHaveLength(1); // 1 day
+    expect(rentReminderEvents([row("2026-06-25")], TODAY)).toHaveLength(0); // 4 days — no threshold
+    expect(rentReminderEvents([row("2026-06-24")], TODAY)[0].dedupeKey).toBe("rent:ten_oak:2026-06-24:3");
+  });
+
+  it("bank-feed alerts cover re-auth and consent expiry", () => {
+    const reauth = bankFeedEvents([{ id: "ba_starling", bankName: "Starling", status: "needs_reauth" }], TODAY);
+    expect(reauth).toHaveLength(1);
+    expect(reauth[0].dedupeKey).toBe("bank:ba_starling:reauth:2026-06");
+
+    const consent = bankFeedEvents(
+      [{ id: "ba_barclays", bankName: "Barclays", status: "connected", consentExpiresAt: "2026-06-28" }],
+      TODAY,
+    );
+    expect(consent).toHaveLength(1); // 7 days before consent expiry
+    expect(consent[0].dedupeKey).toBe("bank:ba_barclays:consent:7");
+    // A connected feed with far-off consent is quiet.
+    expect(
+      bankFeedEvents([{ id: "ba_barclays", bankName: "Barclays", status: "connected", consentExpiresAt: "2026-12-01" }], TODAY),
+    ).toHaveLength(0);
+  });
+
+  it("MTD deadlines fire on the 30/14/7/1-day thresholds for open obligations", () => {
+    const ob = (dueDate: string, status: "open" | "fulfilled") => ({ obligationId: "ob_2627_q1", taxYear: "2026/27", period: "Q1", dueDate, status });
+    expect(mtdDeadlineEvents([ob("2026-07-21", "open")], TODAY)).toHaveLength(1); // 30 days
+    expect(mtdDeadlineEvents([ob("2026-07-21", "fulfilled")], TODAY)).toHaveLength(0); // already filed
+    expect(mtdDeadlineEvents([ob("2026-06-28", "open")], TODAY)[0].dedupeKey).toBe("mtd:ob_2627_q1:due:7");
+  });
+
+  it("collectNotificationEvents runs every trigger and honours a category filter", () => {
+    const input = {
+      documents: [{ id: "d1", title: "EICR", expiryDate: "2026-06-28" }],
+      obligations: [{ obligationId: "o1", taxYear: "2026/27", period: "Q1", dueDate: "2026-06-28", status: "open" as const }],
+    };
+    const all = collectNotificationEvents(input, TODAY);
+    expect(all.map((e) => e.category).sort()).toEqual(["document_expiry", "mtd_deadline"]);
+    const onlyDocs = collectNotificationEvents(input, TODAY, ["document_expiry"]);
+    expect(onlyDocs.every((e) => e.category === "document_expiry")).toBe(true);
+  });
+});
+
+describe("trial & subscription model (entitlement + billing dates)", () => {
+  const NOW = new Date("2026-06-21T12:00:00Z");
+  const TRIAL_END = "2026-07-04T00:00:00.000Z";
+
+  it("a trial account is NOT entitled and sees a countdown banner", () => {
+    const v = subscriptionView({ status: "TRIALING", trialEndsAt: TRIAL_END, billingStartsAt: null }, NOW);
+    expect(v.effectiveStatus).toBe("trialing");
+    expect(v.entitled).toBe(false);
+    expect(v.trialActive).toBe(true);
+    expect(v.daysLeft).toBe(13); // 12.5 days → ceil
+    expect(v.banner).toEqual({ kind: "trial", daysLeft: 13, trialEndsAt: TRIAL_END });
+    // First charge is projected to the end of the trial.
+    expect(v.firstChargeDate?.slice(0, 10)).toBe("2026-07-04");
+  });
+
+  it("scheduling a subscription during the trial unlocks access; billing is the trial-end date", () => {
+    const v = subscriptionView({ status: "TRIALING", trialEndsAt: TRIAL_END, billingStartsAt: TRIAL_END }, NOW);
+    expect(v.effectiveStatus).toBe("scheduled");
+    expect(v.entitled).toBe(true); // overlays removed
+    expect(v.firstChargeDate).toBe(TRIAL_END);
+    expect(v.banner).toEqual({ kind: "scheduled", firstChargeDate: TRIAL_END });
+    expect(formatChargeDate(v.firstChargeDate!)).toBe("4 July 2026"); // accurate messaging
+  });
+
+  it("once the billing date passes a scheduled subscription is active", () => {
+    const later = new Date("2026-07-05T09:00:00Z");
+    const v = subscriptionView({ status: "TRIALING", trialEndsAt: TRIAL_END, billingStartsAt: TRIAL_END }, later);
+    expect(v.effectiveStatus).toBe("active");
+    expect(v.entitled).toBe(true);
+    expect(v.banner).toBeNull();
+  });
+
+  it("active accounts are entitled with no banner; past-due and canceled lose access", () => {
+    const active = subscriptionView({ status: "ACTIVE", trialEndsAt: null, billingStartsAt: null }, NOW);
+    expect(active.entitled).toBe(true);
+    expect(active.banner).toBeNull();
+
+    const pastDue = subscriptionView({ status: "PAST_DUE", trialEndsAt: null, billingStartsAt: null }, NOW);
+    expect(pastDue.entitled).toBe(false);
+    expect(pastDue.banner).toEqual({ kind: "past_due" });
+
+    const canceled = subscriptionView({ status: "CANCELED", trialEndsAt: null, billingStartsAt: null }, NOW);
+    expect(canceled.entitled).toBe(false);
+  });
+
+  it("an expired trial with no subscription is locked and prompts to subscribe", () => {
+    const v = subscriptionView({ status: "TRIALING", trialEndsAt: "2026-06-01T00:00:00.000Z", billingStartsAt: null }, NOW);
+    expect(v.effectiveStatus).toBe("trialing");
+    expect(v.trialActive).toBe(false);
+    expect(v.entitled).toBe(false);
+    expect(v.banner).toEqual({ kind: "trial_ended" });
+  });
+
+  it("projectedFirstCharge is the trial end (or now if the trial already ended); plan price is £12/mo", () => {
+    expect(projectedFirstCharge(TRIAL_END, NOW).toISOString()).toBe(TRIAL_END);
+    expect(projectedFirstCharge("2026-06-01T00:00:00.000Z", NOW).toISOString()).toBe(NOW.toISOString());
+    expect(trialEndFrom(NOW).toISOString()).toBe("2026-07-21T12:00:00.000Z"); // 30-day trial
+    expect(planPriceLabel()).toBe("£12.00 / month");
+  });
+});
+
+describe("encryption at rest", () => {
+  it("round-trips a secret and stores it as opaque ciphertext", () => {
+    const prev = process.env.ENCRYPTION_KEY;
+    process.env.ENCRYPTION_KEY = "unit-test-key";
+    try {
+      const enc = encryptSecret("JBSWY3DPEHPK3PXP");
+      expect(isEncrypted(enc)).toBe(true);
+      expect(enc).not.toContain("JBSWY3DPEHPK3PXP"); // not plaintext
+      expect(decryptSecret(enc)).toBe("JBSWY3DPEHPK3PXP");
+    } finally {
+      if (prev === undefined) delete process.env.ENCRYPTION_KEY;
+      else process.env.ENCRYPTION_KEY = prev;
+    }
+  });
+
+  it("falls back to tagged plaintext when no key is configured (and still decrypts)", () => {
+    const prev = process.env.ENCRYPTION_KEY;
+    delete process.env.ENCRYPTION_KEY;
+    try {
+      const enc = encryptSecret("x");
+      expect(enc).toBe("plain:x");
+      expect(isEncrypted(enc)).toBe(false);
+      expect(decryptSecret(enc)).toBe("x");
+    } finally {
+      if (prev !== undefined) process.env.ENCRYPTION_KEY = prev;
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Integration checks — require a seeded Postgres (DATABASE_URL set).
 // In CI these run against the postgres service; locally they run when a DB is up.
@@ -656,7 +1186,7 @@ const demoSession: AppSession = {
     name: "Walpole Property Holdings",
     type: "portfolio",
     mtd: { enrolled: true, utr: "1234567890" },
-    subscription: { status: "TRIALING", trialEndsAt: "2026-07-04T00:00:00.000Z" },
+    subscription: { status: "TRIALING", trialEndsAt: "2026-07-04T00:00:00.000Z", billingStartsAt: null },
   },
   role: "owner",
   isDelegated: false,
@@ -843,6 +1373,205 @@ describe.skipIf(!hasDb)("profile, settings & auth flows (Postgres)", () => {
         if (invitee) await prisma.account.delete({ where: { id: invitee.accountId } }).catch(() => {});
       }
       await destroy(ownerId);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Notifications end-to-end (Postgres): the scan → dispatch → ledger pipeline.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasDb)("notification scan & dispatch (Postgres)", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  async function makeAccount(suffix: string): Promise<string> {
+    const account = await prisma.account.create({ data: { name: `N ${suffix}`, type: "INDIVIDUAL", timeZone: "Europe/London" } });
+    await prisma.user.create({
+      data: {
+        accountId: account.id,
+        email: `notif-${suffix}@example.test`,
+        firstName: "Owner",
+        lastName: "User",
+        passwordHash: await hashPassword("Password123!"),
+        emailVerified: new Date(),
+        role: "OWNER",
+      },
+    });
+    return account.id;
+  }
+
+  /** A date `days` from the account-local today, as a UTC-midnight Date. */
+  function inDays(days: number): Date {
+    const todayMs = new Date(`${todayInZone("Europe/London")}T00:00:00Z`).getTime();
+    return new Date(todayMs + days * 86_400_000);
+  }
+
+  // The headline acceptance criterion, exercised against the real database.
+  it("a document expiring in 7 days creates exactly one notification per configured channel, and re-running sends nothing more", async () => {
+    const accountId = await makeAccount("doc7");
+    try {
+      const doc = await prisma.document.create({
+        data: { accountId, category: "GAS_SAFETY", title: "Gas Safety Certificate", storageKey: "k", expiryDate: inDays(7) },
+      });
+      const dedupeKey = `doc:${doc.id}:expiry:7`;
+
+      // Default preferences: email + in-app on, push off.
+      const first = await runNotificationScan(accountId, { categories: ["document_expiry"] });
+      expect(first.created).toBe(2);
+
+      const rows = await prisma.notification.findMany({ where: { accountId, dedupeKey } });
+      expect(rows.map((r) => r.channel).sort()).toEqual(["EMAIL", "IN_APP"]);
+      // Exactly one row per channel.
+      expect(new Set(rows.map((r) => r.channel)).size).toBe(rows.length);
+
+      // Re-running is idempotent — no duplicate deliveries.
+      const second = await runNotificationScan(accountId, { categories: ["document_expiry"] });
+      expect(second.created).toBe(0);
+      expect(await prisma.notification.count({ where: { accountId, dedupeKey } })).toBe(2);
+    } finally {
+      await prisma.account.delete({ where: { id: accountId } });
+    }
+  });
+
+  it("disabling the email channel suppresses the email reminder (in-app still delivered)", async () => {
+    const accountId = await makeAccount("noemail");
+    try {
+      await savePreferences(prisma, accountId, {
+        channels: { email: false, in_app: true, push: false },
+        categories: { document_expiry: true, arrears: true, rent_reminder: true, bank_feed: true, mtd_deadline: true },
+        marketingEmails: false,
+      });
+      const doc = await prisma.document.create({
+        data: { accountId, category: "EICR", title: "EICR", storageKey: "k", expiryDate: inDays(14) },
+      });
+      const dedupeKey = `doc:${doc.id}:expiry:14`;
+
+      const summary = await runNotificationScan(accountId, { categories: ["document_expiry"] });
+      expect(summary.created).toBe(1);
+
+      const rows = await prisma.notification.findMany({ where: { accountId, dedupeKey } });
+      expect(rows.map((r) => r.channel)).toEqual(["IN_APP"]); // email suppressed
+    } finally {
+      await prisma.account.delete({ where: { id: accountId } });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit trail & GDPR paths (Postgres).
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasDb)("audit trail & GDPR (Postgres)", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("records & lists audit entries, exports data with secrets redacted, and erases on delete", async () => {
+    const account = await prisma.account.create({ data: { name: "Audit Co", type: "INDIVIDUAL" } });
+    const user = await prisma.user.create({
+      data: {
+        accountId: account.id,
+        email: "audit-user@example.test",
+        firstName: "Aud",
+        lastName: "Itor",
+        passwordHash: await hashPassword("Password123!"),
+        emailVerified: new Date(),
+        role: "OWNER",
+        totpSecret: "totp-secret-value",
+      },
+    });
+    let deleted = false;
+    try {
+      // Audit a financial/external event.
+      await recordAudit({ accountId: account.id, actorUserId: user.id, action: "SUBMIT", entity: "mtd_submission", summary: "Submitted Q1 update" });
+      const log = await listAudit(prisma, account.id);
+      expect(log.some((e) => e.action === "SUBMIT" && e.summary.includes("Q1"))).toBe(true);
+
+      // Data export includes the account but redacts secrets, and is itself audited.
+      const data = await exportAccountData(prisma, account.id);
+      expect((data.account as { id: string }).id).toBe(account.id);
+      const exportedUser = (data.users as Array<Record<string, unknown>>)[0];
+      expect(exportedUser.passwordHash).toBeUndefined();
+      expect(exportedUser.totpSecret).toBeUndefined();
+      expect((await listAudit(prisma, account.id)).some((e) => e.action === "EXPORT")).toBe(true);
+
+      // Erasure cascades to the account's users.
+      await deleteAccount(prisma, account.id, user.id);
+      deleted = true;
+      expect(await prisma.account.findUnique({ where: { id: account.id } })).toBeNull();
+      expect(await prisma.user.findUnique({ where: { id: user.id } })).toBeNull();
+    } finally {
+      if (!deleted) await prisma.account.delete({ where: { id: account.id } }).catch(() => {});
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Billing / subscription activation (Postgres): the acceptance flow.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasDb)("subscription activation & gating (Postgres)", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  // The headline acceptance criterion: trial → gated; activating → ungated;
+  // billing-date messaging accurate.
+  it("a trial account is gated; completing checkout entitles it and schedules billing for the trial-end date", async () => {
+    // Trial ends in the future relative to the pinned clock (2026-06-20).
+    const account = await prisma.account.create({
+      data: { name: "Billing Co", type: "INDIVIDUAL", subscriptionStatus: "TRIALING", trialEndsAt: new Date("2026-07-04T00:00:00Z") },
+    });
+    await prisma.user.create({
+      data: {
+        accountId: account.id,
+        email: "billing-owner@example.test",
+        firstName: "Owner",
+        lastName: "User",
+        passwordHash: await hashPassword("Password123!"),
+        emailVerified: new Date(),
+        role: "OWNER",
+      },
+    });
+
+    try {
+      // Before: on trial, NOT entitled → gated overlays show.
+      expect(viewForAccount(account).entitled).toBe(false);
+
+      const provider = new MockPaymentProvider();
+      const checkout = await provider.createCheckout({
+        accountId: account.id,
+        customerEmail: "billing-owner@example.test",
+        returnUrl: "/settings?subscribed=1",
+        trialEndsAt: account.trialEndsAt!.toISOString(),
+      });
+      // The hosted URL points at the provider's checkout, not an internal data route.
+      expect(checkout.url).toContain("/billing/checkout");
+
+      // Terms must not be auto-accepted — completing without them is rejected.
+      await expect(
+        completeCheckout(prisma, provider, account.id, { sessionId: checkout.id, termsAccepted: false }),
+      ).rejects.toMatchObject({ code: "TERMS_REQUIRED" });
+
+      // Completing with explicit terms acceptance entitles the account.
+      const view = await completeCheckout(prisma, provider, account.id, { sessionId: checkout.id, termsAccepted: true });
+      expect(view.entitled).toBe(true); // overlays removed
+      expect(view.effectiveStatus).toBe("scheduled");
+      expect(view.firstChargeDate?.slice(0, 10)).toBe("2026-07-04");
+      expect(formatChargeDate(view.firstChargeDate!)).toBe("4 July 2026"); // accurate billing date
+
+      // Persisted: card summary (display-only), terms timestamp, scheduled billing.
+      const saved = await prisma.account.findUniqueOrThrow({ where: { id: account.id } });
+      expect(saved.paymentMethodBrand).toBe("Visa");
+      expect(saved.paymentMethodLast4).toBe("4242");
+      expect(saved.termsAcceptedAt).not.toBeNull();
+      expect(saved.billingStartsAt?.toISOString()).toBe("2026-07-04T00:00:00.000Z");
+      expect(saved.subscriptionStatus).toBe("TRIALING"); // not charged yet, but entitled
+      expect(viewForAccount(saved).entitled).toBe(true);
+    } finally {
+      await prisma.account.delete({ where: { id: account.id } });
     }
   });
 });
