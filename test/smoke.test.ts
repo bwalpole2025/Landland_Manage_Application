@@ -1143,11 +1143,11 @@ describe("trial & subscription model (entitlement + billing dates)", () => {
     expect(v.banner).toEqual({ kind: "trial_ended" });
   });
 
-  it("projectedFirstCharge is the trial end (or now if the trial already ended); plan price is £12/mo", () => {
+  it("projectedFirstCharge is the trial end (or now if the trial already ended); plan price is £4.50/mo no VAT", () => {
     expect(projectedFirstCharge(TRIAL_END, NOW).toISOString()).toBe(TRIAL_END);
     expect(projectedFirstCharge("2026-06-01T00:00:00.000Z", NOW).toISOString()).toBe(NOW.toISOString());
     expect(trialEndFrom(NOW).toISOString()).toBe("2026-07-21T12:00:00.000Z"); // 30-day trial
-    expect(planPriceLabel()).toBe("£12.00 / month");
+    expect(planPriceLabel()).toBe("£4.50 / month (no VAT)");
   });
 });
 

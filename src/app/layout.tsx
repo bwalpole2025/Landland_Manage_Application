@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-GB">
+    <html lang="en-GB" className="scroll-smooth">
       <body>
         <TRPCProvider>{children}</TRPCProvider>
         <CookieConsent />

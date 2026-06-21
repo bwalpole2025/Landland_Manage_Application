@@ -16,12 +16,16 @@ import { now as clockNow } from "./clock";
 export const TRIAL_LENGTH_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/** The single paid plan. Prices are integer minor units (pence). */
+/** The single paid plan. Prices are integer minor units (pence), no VAT added. */
 export const PLAN = {
   name: "PropManage Pro",
-  priceMinor: 1200,
+  priceMinor: 450,
   currency: "GBP",
   interval: "month" as const,
+  /** Annual billing saves 20% vs paying monthly. */
+  annualDiscountPct: 20,
+  /** 450 × 12 × 0.8 = 4320p = £43.20 / year. */
+  annualPriceMinor: 4320,
 };
 
 export type RawSubscriptionStatus = "TRIALING" | "ACTIVE" | "PAST_DUE" | "CANCELED";
@@ -136,11 +140,21 @@ export function formatChargeDate(iso: string): string {
   });
 }
 
-/** "£12.00 / month". */
+function gbp(minor: number): string {
+  return (minor / 100).toLocaleString("en-GB", { style: "currency", currency: PLAN.currency });
+}
+
+/** "£4.50 / month (no VAT)". */
 export function planPriceLabel(): string {
-  const amount = (PLAN.priceMinor / 100).toLocaleString("en-GB", {
-    style: "currency",
-    currency: PLAN.currency,
-  });
-  return `${amount} / ${PLAN.interval}`;
+  return `${gbp(PLAN.priceMinor)} / ${PLAN.interval} (no VAT)`;
+}
+
+/** "£43.20 / year (no VAT)" — annual billing, 20% off. */
+export function planAnnualPriceLabel(): string {
+  return `${gbp(PLAN.annualPriceMinor)} / year (no VAT)`;
+}
+
+/** "£3.60" — the per-month equivalent when billed annually. */
+export function planAnnualMonthlyEquiv(): string {
+  return gbp(Math.round(PLAN.annualPriceMinor / 12));
 }
