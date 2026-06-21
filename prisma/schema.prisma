@@ -103,6 +103,15 @@ model Account {
   notificationPreference NotificationPreference?
   pushDevices      PushDevice[]
   auditLogs        AuditLog[]
+  applicabilityProfiles ApplicabilityProfile[]
+  evidence         Evidence[]
+  depositRecords   DepositRecord[]
+  tenancyRecords   TenancyRecord[]
+  rentSchedules    RentSchedule[]
+  rentReceipts     RentReceipt[]
+  licences         LicenceRecord[]
+  tenantRecords    TenantRecord[]
+  maintenanceLogs  MaintenanceLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -954,4 +963,283 @@ model PushDevice {
 
   @@index([accountId])
   @@index([userId])
+}
+
+// ===========================================================================
+// Compliance — Essentials (applicability profile)
+// ===========================================================================
+
+/// Per-property applicability inputs powering the obligations engine. Keyed by a
+/// string propertyId (the app's property id) rather than a Property FK, so it
+/// works uniformly across data sources.
+model ApplicabilityProfile {
+  id         String @id @default(cuid())
+  accountId  String
+  propertyId String
+
+  propertyType           String?
+  occupants              Int?
+  households             Int?
+  hasGasSupply           Boolean @default(false)
+  selectiveLicensingArea Boolean @default(false)
+
+  // Renters' Rights Act in-scope inputs.
+  annualRentGBP        Int?
+  tenantIsIndividual   Boolean @default(true)
+  tenantOnlyOrMainHome Boolean @default(true)
+  landlordResident     Boolean @default(false)
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([accountId, propertyId])
+  @@index([accountId])
+}
+
+// ===========================================================================
+// Compliance evidence (Documents sub-section)
+// ===========================================================================
+
+enum EvidenceKind {
+  GAS_SAFETY
+  EICR
+  EPC
+  SMOKE_CO_ALARM
+  INSURANCE
+  DEPOSIT_PROTECTION
+  HMO_LICENCE
+  SELECTIVE_LICENCE
+  OTHER
+}
+
+/// A stored compliance document and the structural facts derived from it.
+///
+/// CLAIM SEPARATION: `proposedExpiresOn` is a non-authoritative proposal (entered
+/// manually now, by OCR later). It only becomes the structural fact the engine
+/// reads once the landlord confirms it into `expiresOn` (with `confirmedAt`).
+model Evidence {
+  id         String       @id @default(cuid())
+  accountId  String
+  /// Storage-RLS owner — the LEADING segment of the storage key. Stamped on create.
+  ownerId    String
+  propertyId String
+  kind       EvidenceKind
+  /// Object key in StoragePort: `${ownerId}/${propertyId}/${id}/${filename}`.
+  storageKey  String
+  filename    String
+  contentType String?
+
+  issuedOn DateTime?
+  /// Gas anniversary anchor (auditable), when known.
+  anniversary DateTime?
+
+  /// Proposed expiry — NOT authoritative until confirmed.
+  proposedExpiresOn DateTime?
+  /// Confirmed expiry — the structural fact the engine reads. Null until confirmed.
+  expiresOn   DateTime?
+  confirmedAt DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId, propertyId])
+  @@index([ownerId])
+}
+
+// ===========================================================================
+// Tenancy & deposit compliance records (feed the obligations engine)
+// ===========================================================================
+
+/// The deposit facts the engine reads for the deposit-protection / prescribed-
+/// information obligations. One current record per property.
+model DepositRecord {
+  id         String @id @default(cuid())
+  accountId  String
+  propertyId String
+
+  scheme                 String? // tds | dps | mydeposits | null
+  depositGBP             Int?
+  receivedOn             DateTime?
+  protectedOn            DateTime?
+  prescribedInfoServedOn DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([accountId, propertyId])
+  @@index([accountId])
+}
+
+/// Tenancy compliance records — the current periodic assured tenancy plus
+/// history. `isCurrent` marks the one the engine evaluates.
+model TenancyRecord {
+  id         String @id @default(cuid())
+  accountId  String
+  propertyId String
+
+  kind      String  @default("PERIODIC_ASSURED") // PERIODIC_ASSURED | FIXED_TERM | OTHER
+  startDate DateTime?
+  endDate   DateTime?
+  isCurrent Boolean @default(true)
+
+  writtenTermsProvidedOn DateTime?
+  informationProvidedOn  DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId, propertyId])
+}
+
+// ===========================================================================
+// Rent — expected schedule + received-payment ledger (feeds the arrears engine)
+// ===========================================================================
+
+/// The expected rent schedule. The engine generates due dates from these params.
+model RentSchedule {
+  id         String @id @default(cuid())
+  accountId  String
+  propertyId String
+
+  frequency String   @default("MONTHLY") // MONTHLY | WEEKLY
+  rentGBP   Int
+  startDate DateTime
+  endDate   DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([accountId, propertyId])
+  @@index([accountId])
+}
+
+/// A received rent payment. Manual entries are confirmed; bank-feed
+/// reconciliation (Section 4) will later write CONFIRMED receipts into this same
+/// ledger. Only confirmed receipts count toward arrears.
+model RentReceipt {
+  id         String @id @default(cuid())
+  accountId  String
+  propertyId String
+
+  date      DateTime
+  amountGBP Int
+  source    String   @default("MANUAL") // MANUAL | BANK_FEED
+  confirmed Boolean  @default(true)
+  reference String?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId, propertyId])
+}
+
+// ===========================================================================
+// Licensing, tenants, maintenance & activity
+// ===========================================================================
+
+enum LicenceType {
+  HMO
+  ADDITIONAL
+  SELECTIVE
+}
+
+/// A property licence with grant + expiry dates. Mapped to engine evidence so
+/// the licence-expiry obligations read its expiry.
+model LicenceRecord {
+  id         String      @id @default(cuid())
+  accountId  String
+  propertyId String
+  type       LicenceType
+  reference  String?
+  grantedOn  DateTime?
+  expiresOn  DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId, propertyId])
+}
+
+enum RightToRentStatus {
+  UNLIMITED
+  TIME_LIMITED
+  NOT_CHECKED
+}
+
+/// A tenant record with the Right to Rent check (England) and any re-check date.
+model TenantRecord {
+  id         String @id @default(cuid())
+  accountId  String
+  propertyId String
+
+  name  String
+  email String?
+
+  rightToRentStatus     RightToRentStatus @default(NOT_CHECKED)
+  rightToRentCheckedOn  DateTime?
+  rightToRentRecheckDue DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId, propertyId])
+}
+
+/// A repairs-log entry timestamping the request and response — evidences hazard-
+/// response duties (Awaab's Law) and supports Section 8 grounds.
+model MaintenanceLog {
+  id         String  @id @default(cuid())
+  accountId  String
+  propertyId String
+
+  category    String
+  description String
+  hazard      Boolean @default(false)
+
+  reportedAt  DateTime
+  respondedAt DateTime?
+  resolvedAt  DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId, propertyId])
+}
+
+/// APPEND-ONLY activity trail: who changed what and when. Never updated or
+/// deleted (enforced by a DB trigger); a correction is a NEW row. Deliberately
+/// has no Account FK so it survives and is never cascade-deleted.
+model ActivityLog {
+  id          String  @id @default(cuid())
+  accountId   String
+  propertyId  String?
+  actorUserId String?
+  actorName   String?
+  action      String
+  entity      String
+  entityId    String?
+  summary     String
+  isCorrection Boolean @default(false)
+  correctsId  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId, propertyId, createdAt])
 }

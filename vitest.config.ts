@@ -6,11 +6,15 @@ export default defineConfig({
     environment: "node",
     // Load .env so DB-backed tests pick up DATABASE_URL locally.
     setupFiles: ["dotenv/config"],
-    include: ["test/**/*.test.ts"],
+    include: ["test/**/*.test.ts", "packages/**/test/**/*.test.ts"],
   },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@obligations-engine": fileURLToPath(
+        new URL("./packages/obligations-engine/src/index.ts", import.meta.url),
+      ),
+      "@integrations": fileURLToPath(new URL("./packages/integrations/src/index.ts", import.meta.url)),
     },
   },
 });

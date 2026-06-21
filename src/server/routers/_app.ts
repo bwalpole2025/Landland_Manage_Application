@@ -3,6 +3,7 @@ import { accountRouter } from "./account";
 import { authRouter } from "./auth";
 import { billingRouter } from "./billing";
 import { dashboardRouter } from "./dashboard";
+import { essentialsRouter } from "./essentials";
 import { feedsRouter } from "./feeds";
 import { notificationsRouter } from "./notifications";
 import { privacyRouter } from "./privacy";
@@ -16,6 +17,7 @@ export const appRouter = router({
   account: accountRouter,
   billing: billingRouter,
   dashboard: dashboardRouter,
+  essentials: essentialsRouter,
   feeds: feedsRouter,
   notifications: notificationsRouter,
   privacy: privacyRouter,

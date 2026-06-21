@@ -22,5 +22,12 @@ export const env = {
     accessKeyId: process.env.S3_ACCESS_KEY_ID,
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
   },
+  // Supabase Storage for compliance evidence (StoragePort). When unset, an
+  // in-memory adapter is used (dev/test; not durable across restarts).
+  supabase: {
+    url: process.env.SUPABASE_URL,
+    serviceKey: process.env.SUPABASE_SERVICE_KEY,
+    bucket: process.env.SUPABASE_STORAGE_BUCKET ?? "evidence",
+  },
   isProduction: process.env.NODE_ENV === "production",
 } as const;

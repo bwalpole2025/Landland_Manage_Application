@@ -82,6 +82,38 @@ export function PropertyDetail({ data }: { data: PropertyDetailData }) {
             <Badge tone={data.tenancy ? "brand" : "neutral"}>{data.tenancy ? "Occupied" : "Vacant"}</Badge>
             {archived ? <Badge tone="warning">Archived</Badge> : null}
           </div>
+          <div className="mt-2 flex flex-wrap items-center gap-4">
+            <a href={`/properties/${data.id}/essentials`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Compliance Essentials →
+            </a>
+            <a href={`/properties/${data.id}/safety`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Safety certificates →
+            </a>
+            <a href={`/properties/${data.id}/tenancy`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Tenancy →
+            </a>
+            <a href={`/properties/${data.id}/rent`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Rent →
+            </a>
+            <a href={`/properties/${data.id}/deposit`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Deposit →
+            </a>
+            <a href={`/properties/${data.id}/licensing`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Licensing →
+            </a>
+            <a href={`/properties/${data.id}/tenants`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Tenants →
+            </a>
+            <a href={`/properties/${data.id}/maintenance`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Maintenance →
+            </a>
+            <a href={`/properties/${data.id}/documents`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Documents →
+            </a>
+            <a href={`/properties/${data.id}/activity`} className="inline-flex items-center text-sm font-medium text-brand-600 hover:underline">
+              Activity →
+            </a>
+          </div>
         </div>
         <HeaderActions id={data.id} archived={archived} setArchived={setArchived} address={data.address} nickname={data.nickname} />
       </div>

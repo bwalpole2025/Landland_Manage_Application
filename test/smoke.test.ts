@@ -55,6 +55,14 @@ import {
   collectNotificationEvents,
 } from "@/lib/notifications";
 import { runNotificationScan, savePreferences } from "@/server/notifications";
+import { InMemoryStoragePort, ownerOf } from "@integrations";
+import { uploadEvidence, confirmExpiry, confirmGasInspection, confirmedEngineEvidence, listEvidence } from "@/server/documents/service";
+import { evaluateProperty } from "@/server/compliance/evaluate";
+import { saveDeposit, saveCurrentTenancy } from "@/server/compliance/records";
+import { saveSchedule, addManualReceipt, assessRentForProperty } from "@/server/compliance/rent";
+import { addLicence } from "@/server/compliance/licensing";
+import { appendActivity } from "@/server/compliance/activity";
+import { evaluate as evaluateObligations, nextGasDue, UK_RULES, type ApplicabilityProfile as EngineProfile } from "@obligations-engine";
 import { encryptSecret, decryptSecret, isEncrypted } from "@/server/security/encryption";
 import { recordAudit, listAudit } from "@/server/security/audit";
 import { exportAccountData, deleteAccount } from "@/server/security/gdpr";
@@ -1573,5 +1581,342 @@ describe.skipIf(!hasDb)("subscription activation & gating (Postgres)", () => {
     } finally {
       await prisma.account.delete({ where: { id: account.id } });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Documents / evidence (Postgres + in-memory StoragePort, no network): the full
+// upload path and CLAIM SEPARATION — a proposed expiry is not authoritative
+// until confirmed.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasDb)("documents: storage upload + claim separation (Postgres)", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  const inScope: EngineProfile = {
+    hasGasSupply: true,
+    annualRentGBP: 12_000,
+    tenantIsIndividual: true,
+    tenantOnlyOrMainHome: true,
+    landlordResident: false,
+  };
+
+  function gasStatus(accountId: string, propertyId: string, evidence: Awaited<ReturnType<typeof confirmedEngineEvidence>>) {
+    const out = evaluateObligations({ id: propertyId, jurisdiction: "england", evidence }, inScope, UK_RULES, "2026-06-20");
+    const gas = out.find((o) => o.ruleId === "gas-safety");
+    if (!gas) throw new Error("no gas obligation");
+    return gas;
+  }
+
+  it("uploads via StoragePort with an owner-namespaced key; a proposed expiry is NOT authoritative until confirmed", async () => {
+    const account = await prisma.account.create({ data: { name: "Docs Co", type: "INDIVIDUAL" } });
+    const propertyId = "p_docs_test";
+    const storage = new InMemoryStoragePort();
+    try {
+      // --- Upload (full path, no network) ---
+      const up = await uploadEvidence(prisma, storage, {
+        accountId: account.id,
+        ownerId: account.id,
+        propertyId,
+        kind: "GAS_SAFETY",
+        filename: "CP12.pdf",
+        contentType: "application/pdf",
+        body: "PDF-BYTES",
+        proposedExpiresOn: "2027-01-01", // a PROPOSAL only
+      });
+
+      // Stored under the owner-namespaced key (leading segment = owner id for RLS).
+      expect(ownerOf(up.storageKey)).toBe(account.id);
+      expect(up.storageKey).toBe(`${account.id}/${propertyId}/${up.id}/CP12.pdf`);
+      expect(storage.has(up.storageKey)).toBe(true);
+
+      // A signed URL is produced from the in-memory adapter.
+      const list = await listEvidence(prisma, storage, { accountId: account.id, propertyId });
+      expect(list).toHaveLength(1);
+      expect(list[0]!.signedUrl).toContain("memory://signed/");
+      expect(list[0]!.confirmed).toBe(false);
+      expect(list[0]!.proposedExpiresOn).toBe("2027-01-01");
+      expect(list[0]!.expiresOn).toBeNull(); // not authoritative
+
+      // The engine does NOT see the proposed expiry → gas is overdue, not compliant.
+      const before = await confirmedEngineEvidence(prisma, account.id, propertyId);
+      expect(before).toHaveLength(0);
+      const gasBefore = gasStatus(account.id, propertyId, before);
+      expect(gasBefore.status).toBe("overdue");
+      expect(gasBefore.dueDate).toBeNull();
+
+      // --- Confirm → the proposal becomes the authoritative fact the engine reads ---
+      await confirmExpiry(prisma, { accountId: account.id, evidenceId: up.id, expiresOn: "2027-01-01" });
+      const after = await confirmedEngineEvidence(prisma, account.id, propertyId);
+      expect(after).toHaveLength(1);
+      const gasAfter = gasStatus(account.id, propertyId, after);
+      expect(gasAfter.status).toBe("compliant");
+      expect(gasAfter.dueDate).toBe("2027-01-01"); // confirmed expiry is now the deadline
+      expect(gasAfter.evidenceIds).toContain(up.id);
+    } finally {
+      await prisma.account.delete({ where: { id: account.id } });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Safety certificates (Postgres): the gas next-due shown in the UI (read from
+// evaluateProperty, the same call the Safety page makes) must equal the engine's
+// nextGasDue across the grace-window edge cases.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasDb)("safety: gas next-due matches the engine across grace-window edges (Postgres)", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("evaluateProperty's gas dueDate === nextGasDue for preserve / boundary / reset / late", async () => {
+    const account = await prisma.account.create({ data: { name: "Safety Co", type: "INDIVIDUAL" } });
+    const propertyId = "p_safety_test";
+    const storage = new InMemoryStoragePort();
+    try {
+      // In-scope, gas-supplied → the gas obligation applies.
+      await prisma.applicabilityProfile.create({
+        data: {
+          accountId: account.id,
+          propertyId,
+          hasGasSupply: true,
+          annualRentGBP: 12_000,
+          tenantIsIndividual: true,
+          tenantOnlyOrMainHome: true,
+          landlordResident: false,
+        },
+      });
+
+      const anniversary = "2025-07-30"; // grace window starts 2025-05-30
+      const cases = [
+        { inspectionDate: "2025-06-15", expected: "2026-07-30" }, // within window → preserved
+        { inspectionDate: "2025-05-30", expected: "2026-07-30" }, // boundary (window start) → preserved
+        { inspectionDate: "2025-05-29", expected: "2026-05-29" }, // one day earlier → reset
+        { inspectionDate: "2025-08-05", expected: "2026-08-05" }, // after anniversary → late re-anchor
+      ];
+
+      for (const c of cases) {
+        await prisma.evidence.deleteMany({ where: { accountId: account.id, propertyId } });
+        const up = await uploadEvidence(prisma, storage, {
+          accountId: account.id,
+          ownerId: account.id,
+          propertyId,
+          kind: "GAS_SAFETY",
+          filename: "CP12.pdf",
+          contentType: "application/pdf",
+          body: "PDF",
+        });
+        // Capture BOTH dates and feed the anniversary-preserving calculation.
+        await confirmGasInspection(prisma, { accountId: account.id, evidenceId: up.id, inspectionDate: c.inspectionDate, anniversary });
+
+        // The Safety page reads dueDate straight from this evaluation.
+        const { evaluation } = await evaluateProperty(prisma, account.id, propertyId);
+        const gas = evaluation.find((o) => o.ruleId === "gas-safety");
+        if (!gas) throw new Error("no gas obligation");
+
+        // The shown next-due equals the engine's pure nextGasDue, and the expected anchor.
+        expect(gas.dueDate).toBe(nextGasDue(c.inspectionDate, anniversary));
+        expect(gas.dueDate).toBe(c.expected);
+        // And the WHY is the engine's plain-language explanation.
+        expect(gas.basis.summary.length).toBeGreaterThan(0);
+      }
+    } finally {
+      await prisma.account.delete({ where: { id: account.id } });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deposit & tenancy obligations (Postgres): a missing prescribed-information
+// record and an unprotected deposit each resolve to the correct non-compliant
+// status via evaluateProperty (the call the Deposit/Tenancy pages make).
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasDb)("deposit & tenancy non-compliance (Postgres)", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  async function inScopeAccount(suffix: string): Promise<{ accountId: string; propertyId: string }> {
+    const account = await prisma.account.create({ data: { name: `Compliance ${suffix}`, type: "INDIVIDUAL" } });
+    const propertyId = `p_${suffix}`;
+    await prisma.applicabilityProfile.create({
+      data: { accountId: account.id, propertyId, annualRentGBP: 12_000, tenantIsIndividual: true, tenantOnlyOrMainHome: true, landlordResident: false },
+    });
+    return { accountId: account.id, propertyId };
+  }
+
+  it("an unprotected deposit and missing prescribed information each resolve to non-compliant (blocking possession)", async () => {
+    const { accountId, propertyId } = await inScopeAccount("deposit");
+    try {
+      // Received long ago, never protected, prescribed information never served.
+      await saveDeposit(prisma, accountId, propertyId, {
+        scheme: null,
+        depositGBP: 1_500,
+        receivedOn: "2026-01-01",
+        protectedOn: null,
+        prescribedInfoServedOn: null,
+      });
+
+      const before = (await evaluateProperty(prisma, accountId, propertyId)).evaluation;
+      const protection = before.find((o) => o.ruleId === "deposit-protection");
+      const prescribed = before.find((o) => o.ruleId === "deposit-prescribed-information");
+      if (!protection || !prescribed) throw new Error("missing deposit obligations");
+
+      expect(protection.status).toBe("overdue");
+      expect(protection.status).not.toBe("compliant");
+      expect(protection.blocksPossession).toBe(true);
+      expect(protection.dueDate).toBe("2026-01-31");
+
+      expect(prescribed.status).toBe("overdue");
+      expect(prescribed.blocksPossession).toBe(true);
+
+      // Protecting + serving within 30 days clears both.
+      await saveDeposit(prisma, accountId, propertyId, {
+        scheme: "tds",
+        depositGBP: 1_500,
+        receivedOn: "2026-01-01",
+        protectedOn: "2026-01-10",
+        prescribedInfoServedOn: "2026-01-15",
+      });
+      const after = (await evaluateProperty(prisma, accountId, propertyId)).evaluation;
+      expect(after.find((o) => o.ruleId === "deposit-protection")!.status).toBe("compliant");
+      expect(after.find((o) => o.ruleId === "deposit-prescribed-information")!.status).toBe("compliant");
+    } finally {
+      await prisma.account.delete({ where: { id: accountId } });
+    }
+  });
+
+  it("written terms not provided within 28 days of tenancy start is non-compliant", async () => {
+    const { accountId, propertyId } = await inScopeAccount("tenancy");
+    try {
+      await saveCurrentTenancy(prisma, accountId, propertyId, {
+        kind: "PERIODIC_ASSURED",
+        startDate: "2026-01-01",
+        writtenTermsProvidedOn: null,
+        informationProvidedOn: null,
+      });
+      const obligations = (await evaluateProperty(prisma, accountId, propertyId)).evaluation;
+      expect(obligations.find((o) => o.ruleId === "tenancy-written-terms")!.status).toBe("overdue");
+      expect(obligations.find((o) => o.ruleId === "tenancy-information-provision")!.status).toBe("overdue");
+    } finally {
+      await prisma.account.delete({ where: { id: accountId } });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rent arrears (Postgres): the schedule-vs-confirmed-receipts ledger through
+// assessRentForProperty (the call the Rent page makes), including the Section 8
+// Ground 8 threshold at both stages and claim separation (confirmed-only).
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasDb)("rent arrears & Section 8 Ground 8 (Postgres)", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("monthly: threshold met at both stages → Ground 8 available; unconfirmed receipts ignored", async () => {
+    const account = await prisma.account.create({ data: { name: "Rent Co", type: "INDIVIDUAL" } });
+    const propertyId = "p_rent_test";
+    try {
+      await saveSchedule(prisma, account.id, propertyId, { frequency: "MONTHLY", rentGBP: 1000, startDate: "2026-01-01", endDate: null });
+      // An UNCONFIRMED bank-feed receipt that would clear arrears if it counted.
+      await prisma.rentReceipt.create({
+        data: { accountId: account.id, propertyId, date: new Date("2026-02-01"), amountGBP: 3000, source: "BANK_FEED", confirmed: false },
+      });
+
+      const before = (await assessRentForProperty(prisma, account.id, propertyId, { asOf: "2026-04-01", noticeDate: "2026-03-01", hearingDate: "2026-04-01" })).assessment;
+      if (!before) throw new Error("no assessment");
+      expect(before.current.received).toBe(0); // unconfirmed ignored (claim separation)
+      expect(before.notice!.thresholdMet).toBe(true); // £3,000 at notice
+      expect(before.hearing!.thresholdMet).toBe(true); // £4,000 at hearing
+      expect(before.ground8Available).toBe(true);
+      expect(before.status).toBe("overdue");
+
+      // A confirmed manual payment that drops it below by the hearing.
+      await addManualReceipt(prisma, account.id, propertyId, { date: "2026-03-15", amountGBP: 1500, reference: null });
+      const after = (await assessRentForProperty(prisma, account.id, propertyId, { asOf: "2026-04-01", noticeDate: "2026-03-01", hearingDate: "2026-04-01" })).assessment!;
+      expect(after.notice!.thresholdMet).toBe(true);
+      expect(after.hearing!.thresholdMet).toBe(false); // £4,000 − £1,500 = £2,500 < £3,000
+      expect(after.ground8Available).toBe(false);
+    } finally {
+      await prisma.account.delete({ where: { id: account.id } });
+    }
+  });
+
+  it("weekly: exactly 13 weeks' arrears meets the £2,600 threshold", async () => {
+    const account = await prisma.account.create({ data: { name: "Rent Wk", type: "INDIVIDUAL" } });
+    const propertyId = "p_rent_wk";
+    try {
+      await saveSchedule(prisma, account.id, propertyId, { frequency: "WEEKLY", rentGBP: 200, startDate: "2026-01-01", endDate: null });
+      const a = (await assessRentForProperty(prisma, account.id, propertyId, { asOf: "2026-03-26" })).assessment!;
+      expect(a.thresholdAmount).toBe(2600);
+      expect(a.current.arrears).toBe(2600);
+      expect(a.current.thresholdMet).toBe(true);
+      expect(a.status).toBe("overdue");
+    } finally {
+      await prisma.account.delete({ where: { id: account.id } });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Licensing & Activity (Postgres): a lapsed licence resolves to overdue, and
+// the Activity log is append-only (rejects updates/deletes).
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasDb)("licensing & append-only activity (Postgres)", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("a lapsed HMO licence resolves to overdue (via evaluateProperty)", async () => {
+    const account = await prisma.account.create({ data: { name: "Licence Co", type: "INDIVIDUAL" } });
+    const propertyId = "p_licence_test";
+    try {
+      // In-scope + HMO test passes (5 occupants / 2 households) → hmo-licence applies.
+      await prisma.applicabilityProfile.create({
+        data: { accountId: account.id, propertyId, occupants: 5, households: 2, annualRentGBP: 12_000, tenantIsIndividual: true, tenantOnlyOrMainHome: true, landlordResident: false },
+      });
+      await addLicence(prisma, account.id, propertyId, { type: "HMO", reference: "LIC-1", grantedOn: "2021-01-01", expiresOn: "2026-01-01" }); // lapsed (asOf 2026-06-20)
+
+      const { evaluation } = await evaluateProperty(prisma, account.id, propertyId);
+      const hmo = evaluation.find((o) => o.ruleId === "hmo-licence");
+      if (!hmo) throw new Error("no hmo-licence obligation");
+      expect(hmo.status).toBe("overdue");
+      expect(hmo.dueDate).toBe("2026-01-01");
+
+      // A current licence flips it back to compliant.
+      await addLicence(prisma, account.id, propertyId, { type: "HMO", reference: "LIC-2", grantedOn: "2025-06-01", expiresOn: "2030-06-01" });
+      const after = (await evaluateProperty(prisma, account.id, propertyId)).evaluation.find((o) => o.ruleId === "hmo-licence")!;
+      expect(after.status).toBe("compliant");
+    } finally {
+      await prisma.account.delete({ where: { id: account.id } });
+    }
+  });
+
+  it("the Activity log rejects updates and deletes (append-only; a correction is a new row)", async () => {
+    const accountId = "acc_activity_appendonly_test";
+    await appendActivity(prisma, { accountId, propertyId: "p_x", action: "CREATE", entity: "licence", summary: "original entry" });
+    const row = await prisma.activityLog.findFirst({ where: { accountId }, orderBy: { createdAt: "desc" } });
+    expect(row).toBeTruthy();
+
+    // The DB trigger forbids UPDATE and DELETE.
+    await expect(prisma.activityLog.update({ where: { id: row!.id }, data: { summary: "edited" } })).rejects.toThrow();
+    await expect(prisma.activityLog.delete({ where: { id: row!.id } })).rejects.toThrow();
+
+    // The original row is intact and unchanged.
+    const reread = await prisma.activityLog.findUnique({ where: { id: row!.id } });
+    expect(reread?.summary).toBe("original entry");
+
+    // A correction is appended as a NEW row (never an edit) — idempotent check.
+    const before = await prisma.activityLog.count({ where: { accountId } });
+    await appendActivity(prisma, { accountId, propertyId: "p_x", action: "CORRECTION", entity: "activity", summary: "corrects the above", isCorrection: true, correctsId: row!.id });
+    const after = await prisma.activityLog.count({ where: { accountId } });
+    expect(after).toBe(before + 1);
   });
 });
