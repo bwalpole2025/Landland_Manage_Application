@@ -1,4 +1,4 @@
-// Mapping of Landland transaction categories onto HMRC's SA105 "UK property"
+// Mapping of PropManage transaction categories onto HMRC's SA105 "UK property"
 // self-assessment pages. This is a simplified residential-property model used
 // for the in-app tax ESTIMATE — it is not tax advice.
 

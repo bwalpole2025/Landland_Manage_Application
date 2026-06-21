@@ -18,7 +18,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /** The single paid plan. Prices are integer minor units (pence). */
 export const PLAN = {
-  name: "Landland Pro",
+  name: "PropManage Pro",
   priceMinor: 1200,
   currency: "GBP",
   interval: "month" as const,

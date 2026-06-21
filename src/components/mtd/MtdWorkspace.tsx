@@ -118,7 +118,7 @@ function ConnectionPanel({ connection, setConnection }: { connection: MtdConnect
     <Card>
       <CardHeader
         title="Connect to HMRC"
-        subtitle="Authorise Landland to file on your behalf using OAuth — we never see your Government Gateway password."
+        subtitle="Authorise PropManage to file on your behalf using OAuth — we never see your Government Gateway password."
         action={connected ? <Badge tone="success">Connected</Badge> : <Badge tone="warning">Not connected</Badge>}
       />
       <div className="p-5">
@@ -133,7 +133,7 @@ function ConnectionPanel({ connection, setConnection }: { connection: MtdConnect
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-xl text-sm text-slate-600">
-              You&apos;ll be taken to HMRC&apos;s secure sign-in to grant access. Landland receives only an
+              You&apos;ll be taken to HMRC&apos;s secure sign-in to grant access. PropManage receives only an
               authorisation token — your Government Gateway user ID and password stay with HMRC.
             </p>
             <Button onClick={authorise} disabled={pending}>{pending ? "Authorising…" : "Authorise with HMRC"}</Button>

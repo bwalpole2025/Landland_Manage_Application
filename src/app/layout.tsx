@@ -4,7 +4,7 @@ import { TRPCProvider } from "@/lib/trpc/client";
 import { CookieConsent } from "@/components/privacy/CookieConsent";
 
 export const metadata: Metadata = {
-  title: "Landland — Landlord finance & MTD",
+  title: "PropManage — Landlord finance & MTD",
   description:
     "Track rental income and expenses, monitor arrears, store compliance documents, estimate tax, and submit Making Tax Digital updates to HMRC.",
 };

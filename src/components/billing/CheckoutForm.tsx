@@ -32,7 +32,7 @@ export function CheckoutForm({ sessionId, returnUrl }: { sessionId: string; retu
   return (
     <div className="mx-auto max-w-md space-y-5">
       <div className="rounded-card border border-slate-200 bg-white p-5 shadow-card">
-        <p className="text-sm font-semibold text-slate-800">Landland Pro</p>
+        <p className="text-sm font-semibold text-slate-800">PropManage Pro</p>
         <p className="text-2xl font-bold tracking-tight text-slate-900">{planPriceLabel()}</p>
         <p className="mt-1 text-xs text-slate-500">
           You won&apos;t be charged until your free trial ends. Cancel any time before then.
@@ -46,7 +46,7 @@ export function CheckoutForm({ sessionId, returnUrl }: { sessionId: string; retu
             <MockField label="CVC" placeholder="123" />
           </div>
           <p className="text-[11px] text-slate-400">
-            🔒 Card details are handled by our payment provider&apos;s secure hosted fields. Landland never
+            🔒 Card details are handled by our payment provider&apos;s secure hosted fields. PropManage never
             sees or stores your full card number.
           </p>
         </div>
@@ -63,7 +63,7 @@ export function CheckoutForm({ sessionId, returnUrl }: { sessionId: string; retu
             <a href="/help" className="font-medium text-brand-600 hover:underline">
               Terms of Service
             </a>{" "}
-            and authorise Landland to charge my card when the free trial ends.
+            and authorise PropManage to charge my card when the free trial ends.
           </span>
         </label>
 

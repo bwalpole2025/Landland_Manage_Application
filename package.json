@@ -2,7 +2,7 @@
   "name": "landland",
   "version": "0.1.0",
   "private": true,
-  "description": "Landland — a landlord finance & property management SaaS (MTD for IT ready). Modelled on Hammock.",
+  "description": "PropManage — a landlord finance & property management SaaS (MTD for IT ready). Modelled on Hammock.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

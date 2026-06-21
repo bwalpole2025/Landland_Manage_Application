@@ -70,7 +70,7 @@ export default function LoginPage() {
       subtitle="Welcome back. Sign in to your account."
       footer={
         <>
-          New to Landland?{" "}
+          New to PropManage?{" "}
           <Link href="/register" className="font-medium text-brand-700 hover:text-brand-800">
             Create an account
           </Link>

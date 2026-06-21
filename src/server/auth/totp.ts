@@ -8,7 +8,7 @@ export function generateTotpSecret(): string {
 
 /** otpauth:// URI to render as a QR code in an authenticator app. */
 export function totpKeyUri(accountEmail: string, secret: string): string {
-  return authenticator.keyuri(accountEmail, "Landland", secret);
+  return authenticator.keyuri(accountEmail, "PropManage", secret);
 }
 
 export function verifyTotp(token: string, secret: string): boolean {

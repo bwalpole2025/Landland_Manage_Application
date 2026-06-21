@@ -5,19 +5,19 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // --- Primary: vivid purple/indigo (logo, active nav, primary buttons, highlights) ---
+        // --- Primary: dark green (logo, active nav, primary buttons, highlights) ---
         brand: {
-          50: "#f5f3ff",
-          100: "#ede9fe",
-          200: "#ddd6fe",
-          300: "#c4b5fd",
-          400: "#a78bfa",
-          500: "#8b5cf6",
-          600: "#7c3aed", // primary action
-          700: "#6d28d9",
-          800: "#5b21b6",
-          900: "#4c1d95",
-          950: "#2e1065",
+          50: "#f0fdf4",
+          100: "#dcfce7",
+          200: "#bbf7d0",
+          300: "#86efac",
+          400: "#4ade80",
+          500: "#22a55a",
+          600: "#15803d", // primary action — dark green
+          700: "#166534",
+          800: "#14532d",
+          900: "#0f3d24",
+          950: "#052e16",
         },
         // --- Secondary accent: teal/cyan (secondary actions, e.g. "Import file") ---
         accent: {

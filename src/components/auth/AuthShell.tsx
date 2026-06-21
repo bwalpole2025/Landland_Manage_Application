@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { Logo } from "@/components/brand/Logo";
 
 /** Centered card used by every unauthenticated auth page (login, register, …). */
 export function AuthShell({
@@ -17,10 +18,8 @@ export function AuthShell({
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-10">
       <div className="w-full max-w-sm">
         <Link href="/" className="mb-6 flex items-center justify-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-base font-bold text-white">
-            L
-          </span>
-          <span className="text-xl font-semibold tracking-tight text-slate-900">Landland</span>
+          <Logo className="h-9 w-9" />
+          <span className="text-xl font-semibold tracking-tight text-slate-900">PropManage</span>
         </Link>
 
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">

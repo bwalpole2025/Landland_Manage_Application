@@ -67,7 +67,7 @@ export async function createInvitation(
   const account = await prisma.account.findUnique({ where: { id: accountId } });
   await providers.mailer.send({
     to: email,
-    subject: `You've been invited to ${account?.name ?? "a Landland account"}`,
+    subject: `You've been invited to ${account?.name ?? "a PropManage account"}`,
     text: `You've been invited as ${role === "ACCOUNTANT" ? "an accountant" : "an assistant"}. Accept your invitation: ${env.appUrl}/invite?token=${raw}`,
   });
 }

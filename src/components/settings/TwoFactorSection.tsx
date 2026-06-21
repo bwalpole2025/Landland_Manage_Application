@@ -121,7 +121,7 @@ export function TwoFactorSection({ user }: { user: SettingsUser }) {
         <>
           <div>
             <p className="text-sm text-slate-700">
-              Add Landland to your authenticator app, then enter the 6-digit code it shows.
+              Add PropManage to your authenticator app, then enter the 6-digit code it shows.
             </p>
             <p className="mt-2 text-sm text-slate-500">Can&apos;t scan? Enter this key manually:</p>
             <code className="mt-1 block break-all rounded-lg bg-slate-100 px-3 py-2 text-xs font-mono text-slate-800">

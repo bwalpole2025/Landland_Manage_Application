@@ -69,7 +69,7 @@ export function NotificationPreferencesSection() {
   return (
     <SettingsCard
       title="Manage notification preferences"
-      description="Choose how Landland alerts you. A notification is sent on a channel only when both the channel and the topic below are on."
+      description="Choose how PropManage alerts you. A notification is sent on a channel only when both the channel and the topic below are on."
       footer={<StatusLine status={status} />}
     >
       {/* Channels */}

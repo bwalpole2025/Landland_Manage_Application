@@ -64,7 +64,7 @@ export function OnboardingChecklist({
           <h2 className="text-base font-semibold text-brand-900">{title}</h2>
           <p className="mt-0.5 text-sm text-brand-800/80">
             {allDone
-              ? "Your account is fully set up — Landland is tracking everything for you."
+              ? "Your account is fully set up — PropManage is tracking everything for you."
               : "A few quick steps to get your portfolio fully tracked."}
           </p>
         </div>

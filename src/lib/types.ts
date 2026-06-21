@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Landland domain model
+// PropManage domain model
 //
 // Conventions:
 //  - All money is stored as integer PENCE (GBP). Never use floats for money.

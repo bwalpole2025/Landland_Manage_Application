@@ -1,4 +1,4 @@
-// Landland design system — base components.
+// PropManage design system — base components.
 export { cn, type Tone } from "./util";
 export { Button, type ButtonProps, type ButtonVariant, type ButtonSize } from "./Button";
 export { Badge } from "./Badge";

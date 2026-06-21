@@ -6,7 +6,7 @@ export default function HelpPage() {
     <>
       <PageHeader
         title="Help & support"
-        description="How-to videos, guides, and a live 1:1 tutorial to get the most out of Landland."
+        description="How-to videos, guides, and a live 1:1 tutorial to get the most out of PropManage."
       />
 
       {/* Live tutorial booking */}

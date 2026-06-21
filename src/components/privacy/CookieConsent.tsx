@@ -43,7 +43,7 @@ export function CookieConsent() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-600">
           We use strictly-necessary cookies to keep you signed in and remember your layout. With your
-          consent we&apos;d also use optional cookies to improve Landland. See our{" "}
+          consent we&apos;d also use optional cookies to improve PropManage. See our{" "}
           <a href="/help" className="font-medium text-brand-600 hover:underline">
             privacy &amp; cookie policy
           </a>

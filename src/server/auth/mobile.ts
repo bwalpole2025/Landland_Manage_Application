@@ -47,7 +47,7 @@ export async function sendMobileCode(userId: string, mobile: string): Promise<vo
 
   await providers.sms.send({
     to: normalised,
-    text: `Your Landland verification code is ${code}. It expires in 10 minutes.`,
+    text: `Your PropManage verification code is ${code}. It expires in 10 minutes.`,
   });
 }
 

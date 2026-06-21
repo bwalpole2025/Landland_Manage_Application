@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// In-memory mock dataset for the Landland scaffold.
+// In-memory mock dataset for the PropManage scaffold.
 //
 // This stands in for a database. It is intentionally seeded so the UI exercises
 // every state worth designing for:

@@ -14,7 +14,7 @@ export async function GET() {
   }
 
   const data = await exportAccountData(prisma, session.account.id);
-  const filename = `landland-export-${session.account.id}-${new Date().toISOString().slice(0, 10)}.json`;
+  const filename = `propmanage-export-${session.account.id}-${new Date().toISOString().slice(0, 10)}.json`;
 
   return new NextResponse(JSON.stringify(data, null, 2), {
     status: 200,

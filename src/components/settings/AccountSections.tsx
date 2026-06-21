@@ -69,7 +69,7 @@ export function LocaleSection({
         </select>
       </Labeled>
       <p className="text-xs text-slate-400">
-        Landland will let you reconcile transactions and produce statements from {firstTaxYear} onwards.
+        PropManage will let you reconcile transactions and produce statements from {firstTaxYear} onwards.
       </p>
     </SettingsCard>
   );
@@ -139,7 +139,7 @@ export function SubscriptionSection() {
     <SettingsCard
       title="Subscription"
       badge={badge}
-      description={`Landland Pro — ${planPriceLabel()}.`}
+      description={`PropManage Pro — ${planPriceLabel()}.`}
       footer={
         v.effectiveStatus === "trialing" || v.effectiveStatus === "past_due" || v.effectiveStatus === "canceled" ? (
           <>
@@ -170,14 +170,14 @@ export function SubscriptionSection() {
         </p>
       ) : v.effectiveStatus === "scheduled" ? (
         <p className="text-sm text-slate-700">
-          You&apos;re subscribed to Landland Pro 🎉 Full access is unlocked now. Your first payment of{" "}
+          You&apos;re subscribed to PropManage Pro 🎉 Full access is unlocked now. Your first payment of{" "}
           <strong>{planPriceLabel().split(" / ")[0]}</strong> will be taken on <strong>{firstCharge}</strong>
           {card ? <> using {card}</> : null}. You won&apos;t be charged before then.
         </p>
       ) : v.effectiveStatus === "active" ? (
         <p className="text-sm text-slate-700">
           Your subscription is active — {planPriceLabel()}{card ? <>, billed to {card}</> : null}. Thanks for using
-          Landland!
+          PropManage!
         </p>
       ) : v.effectiveStatus === "past_due" ? (
         <p className="text-sm text-red-700">Your last payment failed. Re-subscribe to restore full access.</p>

@@ -80,7 +80,7 @@ function InviteInner() {
       <form className="mt-5 space-y-4" onSubmit={accept} noValidate>
         {userExists ? (
           <p className="text-sm text-slate-600">
-            You already have a Landland account. Accept to gain delegated access to this account.
+            You already have a PropManage account. Accept to gain delegated access to this account.
           </p>
         ) : (
           <>

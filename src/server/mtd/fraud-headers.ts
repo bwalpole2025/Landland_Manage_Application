@@ -20,7 +20,7 @@ export interface FraudHeaderClientInfo {
 }
 
 const VENDOR = {
-  productName: "Landland",
+  productName: "PropManage",
   version: "1.0.0",
   licenseId: "landland-mtd-001",
 };
@@ -32,7 +32,7 @@ export function buildFraudPreventionHeaders(info: FraudHeaderClientInfo = {}): R
     "Gov-Client-Timezone": info.timezone ?? "UTC+00:00",
     "Gov-Client-User-IDs": `landland=${info.userId ?? "anonymous"}`,
     "Gov-Client-Public-IP": info.clientPublicIp ?? "",
-    "Gov-Client-User-Agent": info.userAgent ?? "Landland/1.0",
+    "Gov-Client-User-Agent": info.userAgent ?? "PropManage/1.0",
     "Gov-Vendor-Product-Name": VENDOR.productName,
     "Gov-Vendor-Version": `${VENDOR.productName}=${VENDOR.version}`,
     "Gov-Vendor-License-IDs": `landland=${VENDOR.licenseId}`,

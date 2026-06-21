@@ -1,11 +1,11 @@
-# Product Brief — Landland
+# Product Brief — PropManage
 
 > A landlord finance & property management SaaS, modelled on Hammock.
 > _Status: first build (scaffold). Last updated: 2026-06-20._
 
 ## 1. One-liner
 
-Landland helps UK landlords replace spreadsheets by automatically tracking rental
+PropManage helps UK landlords replace spreadsheets by automatically tracking rental
 income and expenses, monitoring arrears, storing compliance documents, estimating
 tax, and submitting **Making Tax Digital for Income Tax (MTD for IT)** updates to HMRC.
 

@@ -1,6 +1,6 @@
 # Security & Privacy Review Checklist
 
-This checklist tracks Landland against the project's security & privacy
+This checklist tracks PropManage against the project's security & privacy
 requirements. Each item links to where it is enforced.
 
 ## Access control & tenant isolation

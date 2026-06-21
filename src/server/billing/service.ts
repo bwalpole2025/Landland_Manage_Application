@@ -108,7 +108,7 @@ export async function completeCheckout(
       action: "UPDATE",
       entity: "subscription",
       entityId: result.subscriptionId ?? null,
-      summary: `Subscribed to Landland Pro — billing scheduled for ${firstCharge.toISOString().slice(0, 10)}`,
+      summary: `Subscribed to PropManage Pro — billing scheduled for ${firstCharge.toISOString().slice(0, 10)}`,
       metadata: { paymentMethod: result.paymentMethod, termsAccepted: true },
     },
     prisma,

@@ -23,7 +23,7 @@ export default async function CheckoutPage({
     <>
       <PageHeader
         title="Confirm your subscription"
-        description="Secure checkout — your card is handled by our payment provider, not by Landland."
+        description="Secure checkout — your card is handled by our payment provider, not by PropManage."
       />
       <CheckoutForm sessionId={sessionId} returnUrl={searchParams.return ?? "/settings?subscribed=1"} />
     </>

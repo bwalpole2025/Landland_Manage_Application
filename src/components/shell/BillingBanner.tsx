@@ -12,7 +12,7 @@ export function BillingBanner({ banner, onDismiss }: { banner: BannerState; onDi
   if (banner.kind === "scheduled") {
     return (
       <Bar tone="success" onDismiss={onDismiss}>
-        You&apos;re subscribed to Landland Pro — full access is unlocked. Your first payment is on{" "}
+        You&apos;re subscribed to PropManage Pro — full access is unlocked. Your first payment is on{" "}
         <strong>{formatChargeDate(banner.firstChargeDate)}</strong>.
       </Bar>
     );

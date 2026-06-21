@@ -1,4 +1,4 @@
-# Landland
+# PropManage
 
 A landlord finance & property management SaaS (MTD for IT ready), modelled on Hammock.
 Track rental income and expenses, monitor arrears, store compliance documents, estimate

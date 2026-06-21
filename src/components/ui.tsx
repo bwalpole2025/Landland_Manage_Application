@@ -1,4 +1,4 @@
-// Reusable presentational primitives for the Landland app shell.
+// Reusable presentational primitives for the PropManage app shell.
 // All are pure server components (no client hooks).
 
 import Link from "next/link";

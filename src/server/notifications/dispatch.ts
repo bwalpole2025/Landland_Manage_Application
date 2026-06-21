@@ -82,7 +82,7 @@ export async function dispatchPlanned(
         await providers.mailer.send({
           to,
           subject: d.title,
-          text: `${d.body}\n\nOpen Landland: ${appUrl(d.href)}`,
+          text: `${d.body}\n\nOpen PropManage: ${appUrl(d.href)}`,
         });
       }
       result.emailed += 1;

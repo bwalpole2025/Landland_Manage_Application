@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/components/ds/util";
 import { ChevronDownIcon, ChevronRightIcon, CollapseIcon } from "@/components/icons";
 import { AccountDropdown } from "./AccountDropdown";
+import { Logo } from "@/components/brand/Logo";
 import { NAV, matchNav, type NavEntry } from "./nav";
 import type { AppSession } from "@/server/auth/session";
 
@@ -50,11 +51,9 @@ export function Sidebar({ session, collapsed, mobileOpen, onToggleCollapse, onNa
     >
       {/* Logo → Overview */}
       <div className={cn("flex h-16 shrink-0 items-center border-b border-slate-100", collapsed ? "justify-center px-2" : "px-5")}>
-        <Link href="/dashboard" onClick={onNavigate} className="flex items-center gap-2" aria-label="Landland — Overview">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
-            L
-          </span>
-          {!collapsed ? <span className="text-lg font-semibold tracking-tight text-slate-900">Landland</span> : null}
+        <Link href="/dashboard" onClick={onNavigate} className="flex items-center gap-2" aria-label="PropManage — Overview">
+          <Logo className="h-8 w-8 shrink-0" />
+          {!collapsed ? <span className="text-lg font-semibold tracking-tight text-slate-900">PropManage</span> : null}
         </Link>
       </div>
 

@@ -86,8 +86,8 @@ export async function sendVerificationEmail(userId: string, email: string): Prom
   const token = await createEmailVerificationToken(userId);
   await providers.mailer.send({
     to: email,
-    subject: "Verify your Landland email",
-    text: `Welcome to Landland! Confirm your email: ${env.appUrl}/verify?token=${token}`,
+    subject: "Verify your PropManage email",
+    text: `Welcome to PropManage! Confirm your email: ${env.appUrl}/verify?token=${token}`,
   });
 }
 
@@ -146,7 +146,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
   const token = await createPasswordResetToken(user.id);
   await providers.mailer.send({
     to: user.email,
-    subject: "Reset your Landland password",
+    subject: "Reset your PropManage password",
     text: `Reset your password: ${env.appUrl}/reset?token=${token}`,
   });
 }
